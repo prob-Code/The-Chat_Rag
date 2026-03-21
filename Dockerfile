@@ -16,8 +16,14 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy application code (without binaries)
+COPY api.py .
+COPY ingest.py .
+COPY rag_core/ ./rag_core/
+COPY data/ ./data/
+
+# Generate vector database during build
+RUN python ingest.py
 
 # Expose port
 EXPOSE 8000
