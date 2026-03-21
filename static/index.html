@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RagGita - Spiritual Guide</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 800px;
+            padding: 40px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+
+        .api-config {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .api-config label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 500;
+        }
+
+        .api-config input {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .api-config input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .chat-container {
+            height: 400px;
+            overflow-y: auto;
+            border: 2px solid #e0e0e0;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background: #fafafa;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 15px;
+            border-radius: 15px;
+            max-width: 80%;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .user-message {
+            background: #667eea;
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .bot-message {
+            background: white;
+            color: #333;
+            border: 2px solid #e0e0e0;
+        }
+
+        .input-container {
+            display: flex;
+            gap: 10px;
+        }
+
+        .input-container input {
+            flex: 1;
+            padding: 15px 20px;
+            border: 2px solid #ddd;
+            border-radius: 30px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        .input-container input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .input-container button {
+            padding: 15px 30px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 30px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.3s, transform 0.2s;
+        }
+
+        .input-container button:hover:not(:disabled) {
+            background: #5a6fd6;
+            transform: scale(1.05);
+        }
+
+        .input-container button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            color: #e74c3c;
+            text-align: center;
+            padding: 10px;
+            background: #fdf2f2;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            display: none;
+        }
+
+        .error.active {
+            display: block;
+        }
+
+        .status {
+            text-align: center;
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 20px;
+            color: #888;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>RagGita</h1>
+        <p class="subtitle">Your compassionate spiritual guide based on the Bhagavad Gita</p>
+
+        <div class="api-config">
+            <label for="apiUrl">API URL:</label>
+            <input type="text" id="apiUrl" value="http://localhost:8000" placeholder="http://localhost:8000">
+        </div>
+
+        <div id="status" class="status disconnected">
+            Checking connection...
+        </div>
+
+        <div id="error" class="error"></div>
+
+        <div class="chat-container" id="chatContainer">
+            <div class="message bot-message">
+                Welcome! I'm here to help you find wisdom and comfort from the Bhagavad Gita. What would you like to talk about today?
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Seeking wisdom from the Gita...</p>
+        </div>
+
+        <div class="input-container">
+            <input type="text" id="questionInput" placeholder="Ask your question..." maxlength="2000">
+            <button id="sendBtn" onclick="sendMessage()">Send</button>
+        </div>
+
+        <div class="footer">
+            <p>Powered by Bytez GPT-5.1 | RAG over Bhagavad Gita</p>
+        </div>
+    </div>
+
+    <script>
+        const chatContainer = document.getElementById('chatContainer');
+        const questionInput = document.getElementById('questionInput');
+        const loading = document.getElementById('loading');
+        const error = document.getElementById('error');
+        const status = document.getElementById('status');
+        const sendBtn = document.getElementById('sendBtn');
+
+        // Check connection on load
+        checkConnection();
+
+        // Allow Enter key to send
+        questionInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        async function checkConnection() {
+            const apiUrl = document.getElementById('apiUrl').value.trim();
+            try {
+                const response = await fetch(`${apiUrl}/health`, { method: 'GET' });
+                if (response.ok) {
+                    status.textContent = 'Connected to API';
+                    status.className = 'status connected';
+                } else {
+                    throw new Error('API not ready');
+                }
+            } catch (err) {
+                status.textContent = 'Not connected - API may be starting up or URL is incorrect';
+                status.className = 'status disconnected';
+            }
+        }
+
+        async function sendMessage() {
+            const question = questionInput.value.trim();
+            if (!question) return;
+
+            const apiUrl = document.getElementById('apiUrl').value.trim();
+
+            // Add user message
+            addMessage(question, 'user');
+            questionInput.value = '';
+
+            // Show loading
+            loading.classList.add('active');
+            sendBtn.disabled = true;
+            error.classList.remove('active');
+
+            try {
+                const response = await fetch(`${apiUrl}/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ question }),
+                });
+
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+                    throw new Error(errData.detail || `HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+                addMessage(data.answer, 'bot');
+
+                // Update status
+                status.textContent = 'Connected to API';
+                status.className = 'status connected';
+
+            } catch (err) {
+                console.error('Error:', err);
+                error.textContent = `Error: ${err.message}. Make sure the API is running.`;
+                error.classList.add('active');
+                status.textContent = 'Connection failed';
+                status.className = 'status disconnected';
+            } finally {
+                loading.classList.remove('active');
+                sendBtn.disabled = false;
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+        }
+
+        function addMessage(text, sender) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}-message`;
+            messageDiv.textContent = text;
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        // Check connection periodically
+        setInterval(checkConnection, 30000);
+    </script>
+</body>
+</html>
