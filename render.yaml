@@ -14,8 +14,8 @@ services:
         value: "openai/gpt-5.1"
       - key: BYTEZ_API_KEY
         sync: false  # Set this manually in Render dashboard
-      - key: HUGGINGFACE_HUB_TOKEN
-        sync: false  # Optional: for Hugging Face model access
+      # HUGGINGFACE_HUB_TOKEN is optional - only needed if you hit rate limits
+      # Get free token at https://huggingface.co/settings/tokens if needed
     healthCheckPath: /health
     autoDeploy: true
     plan: free  # Change to 'starter' or 'standard' for production
