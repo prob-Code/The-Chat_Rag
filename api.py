@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import PromptTemplate
-from lightrag.bytez_llm import BytezGPT
+from rag_core.bytez_llm import BytezGPT
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
