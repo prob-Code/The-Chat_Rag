@@ -23,10 +23,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from langchain_community.vectorstores import FAISS
 try:
-    # Prefer remote embeddings when an API key is provided to avoid large local model requirements
-    from langchain.embeddings import OpenAIEmbeddings
-except Exception:
-    OpenAIEmbeddings = None
+    from langchain_huggingface import HuggingFaceEndpointEmbeddings
+except ImportError:
+    HuggingFaceEndpointEmbeddings = None
 
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import PromptTemplate
@@ -127,14 +126,22 @@ async def lifespan(app: FastAPI):
 
     try:
         # 1. Load embeddings
-        # IMPORTANT: Always use HuggingFace embeddings for FAISS since the DB
-        # was built with "all-MiniLM-L6-v2" (384 dimensions).
-        # OpenAI embeddings (1536 dims) would cause a dimension mismatch crash.
+        # The FAISS DB was built with "all-MiniLM-L6-v2" (384 dimensions).
+        # We support two modes:
+        #   - REMOTE (default): Uses HuggingFace Inference API — near-zero memory
+        #   - LOCAL: Loads PyTorch model — needs ~400MB RAM
         logger.info("Loading embeddings model...")
-        force_local = os.getenv("FORCE_LOCAL_EMBEDDINGS", "true").strip().lower() in ("1", "true", "yes", "y")
-        if not force_local and os.getenv("OPENAI_API_KEY") and OpenAIEmbeddings is not None:
-            logger.info("OPENAI_API_KEY detected — using OpenAIEmbeddings (remote)")
-            embedding_model = OpenAIEmbeddings()
+        use_remote = os.getenv("USE_REMOTE_EMBEDDINGS", "true").strip().lower() in ("1", "true", "yes", "y")
+        hf_token = os.getenv("HF_TOKEN", os.getenv("HUGGINGFACE_HUB_TOKEN", "")).strip()
+
+        if use_remote and HuggingFaceEndpointEmbeddings is not None:
+            logger.info("Using HuggingFace Inference API embeddings (low memory)")
+            endpoint_kwargs = {
+                "model": "sentence-transformers/all-MiniLM-L6-v2",
+            }
+            if hf_token:
+                endpoint_kwargs["huggingfacehub_api_token"] = hf_token
+            embedding_model = HuggingFaceEndpointEmbeddings(**endpoint_kwargs)
         else:
             logger.info("Using local HuggingFace embeddings (all-MiniLM-L6-v2)")
             embedding_model = HuggingFaceEmbeddings(

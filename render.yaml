@@ -19,9 +19,12 @@ services:
         value: "https://api.groq.com/openai/v1"
       - key: LLM_MODEL
         value: "llama-3.1-8b-instant"
-      # Force local embeddings to match FAISS DB dimensions
-      - key: FORCE_LOCAL_EMBEDDINGS
+      # Use remote embeddings to fit within Render's 512MB RAM limit
+      - key: USE_REMOTE_EMBEDDINGS
         value: "true"
+      # (Optional) Hugging Face token for higher rate limits on Inference API
+      - key: HF_TOKEN
+        sync: false
       # Disable Bytez (using Groq instead)
       - key: USE_BYTEZ
         value: "false"
