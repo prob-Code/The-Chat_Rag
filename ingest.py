@@ -2,7 +2,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-
+print()
 # 1. Load Gita PDF
 loader = PyPDFLoader("data/bgita.pdf")
 documents = loader.load()

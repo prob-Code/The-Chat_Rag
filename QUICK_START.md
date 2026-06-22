@@ -21,6 +21,63 @@ The application is **running and waiting for your questions**.
 python chat.py
 ```
 
+---
+
+## 🧱 Two Modes in This Repo
+
+### 1) Basic RAG (FAISS-only)
+
+What it is:
+- Simple RAG over the Gita using a FAISS vector index.
+
+Main files:
+- `ingest.py` builds the FAISS DB in `gita_vector_db/`
+- `chat.py` runs a terminal chat
+- `api.py` + `start_server.py` run the FastAPI server
+
+Run it:
+```bash
+.
+\.\.venv\Scripts\Activate.ps1
+
+# Build the FAISS vector DB (only needed once)
+python ingest.py
+
+# Chat in terminal
+python chat.py
+
+# OR run the API
+python start_server.py
+```
+
+### 2) LightRAG (Knowledge Graph + ChromaDB)
+
+What it is:
+- Adds an entity/relationship knowledge graph + hybrid retrieval (graph + vector).
+
+Main files:
+- `rag_core/ingest_lightrag.py` (fast/simple ingestion)
+- `ingest_lightrag_safe.py` (rate-limited + resumable ingestion)
+- `rag_core/chat_lightrag.py` (terminal chat)
+
+Artifacts written:
+- `lightrag_storage/knowledge_graph.gpickle` (graph)
+- `lightrag_storage/chromadb/` (Chroma vector store)
+
+Run it:
+```bash
+.
+\.\.venv\Scripts\Activate.ps1
+
+# Build graph + chroma (pick ONE)
+python rag_core/ingest_lightrag.py
+# OR (safer / resumable)
+python ingest_lightrag_safe.py
+
+# Chat
+python rag_core/chat_lightrag.py
+```
+
 ### Ask Questions
 Examples:
 - "How to deal with stress at work?"

@@ -25,7 +25,7 @@ class LightRAGChat:
         print("Initializing LightRAG Chat...")
         
         # Load embedding model
-        print("  Loading embedding model...")
+        print("  Loading embedding model (used to embed your questions)...")
         self.embedding_model = HuggingFaceEmbeddings(
             model_name=self.config.embedding_model
         )
@@ -122,8 +122,10 @@ def main():
     # Check if graph exists
     if not os.path.exists(config.graph_path):
         print("\n⚠ LightRAG not initialized!")
-        print("Please run: python lightrag/ingest_lightrag.py")
-        print("This will build the knowledge graph from your documents.\n")
+        print("Please run one of:")
+        print("  python rag_core/ingest_lightrag.py")
+        print("  python ingest_lightrag_safe.py")
+        print("This will build the knowledge graph + ChromaDB store from your documents.\n")
         return
     
     # Initialize chat

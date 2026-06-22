@@ -25,8 +25,16 @@ class HybridRetriever:
         
         # Initialize components
         self.keyword_extractor = keyword_extractor or DualKeywordExtractor(config=config)
-        self.graph_retriever = graph_retriever or GraphRetriever(graph, config=config)
         self.vector_retriever = vector_retriever or VectorRetriever(config=config)
+
+        # Reuse the same embedding model for graph + vector retrieval to avoid
+        # loading the sentence-transformers model twice.
+        embedding_model = getattr(self.vector_retriever, "embedding_model", None)
+        self.graph_retriever = graph_retriever or GraphRetriever(
+            graph,
+            embedding_model=embedding_model,
+            config=config,
+        )
     
     def retrieve(self, query: str) -> Dict[str, Any]:
         """

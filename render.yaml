@@ -10,12 +10,21 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.12"
-      - key: BYTEZ_MODEL
-        value: "openai/gpt-5.1"
-      - key: BYTEZ_API_KEY
+      # Groq LLM Configuration
+      - key: OPENAI_API_KEY
+        sync: false  # Set this manually in Render dashboard (your Groq API key)
+      - key: GROQ_API_KEY
         sync: false  # Set this manually in Render dashboard
-      # HUGGINGFACE_HUB_TOKEN is optional - only needed if you hit rate limits
-      # Get free token at https://huggingface.co/settings/tokens if needed
+      - key: OPENAI_API_BASE
+        value: "https://api.groq.com/openai/v1"
+      - key: LLM_MODEL
+        value: "llama-3.1-8b-instant"
+      # Force local embeddings to match FAISS DB dimensions
+      - key: FORCE_LOCAL_EMBEDDINGS
+        value: "true"
+      # Disable Bytez (using Groq instead)
+      - key: USE_BYTEZ
+        value: "false"
     healthCheckPath: /health
     autoDeploy: true
     plan: free  # Change to 'starter' or 'standard' for production

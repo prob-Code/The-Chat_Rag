@@ -2,12 +2,17 @@
 LightRAG Configuration Settings
 """
 import os
+from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Sequence, Any
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Resolve paths relative to the project root (so scripts work from any CWD)
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_DEFAULT_BASE_PATH = _PROJECT_ROOT / "lightrag_storage"
 
 @dataclass
 class LightRAGConfig:
@@ -18,20 +23,21 @@ class LightRAGConfig:
     openai_api_base: str = os.getenv("OPENAI_API_BASE", "https://api.groq.com/openai/v1")
     llm_model: str = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")
     llm_temperature: float = 0.7
+    llm_timeout: float = float(os.getenv("LLM_TIMEOUT", "60"))
     
     # Bytez Configuration (GPT-5.1)
     bytez_api_key: str = os.getenv("BYTEZ_API_KEY", "")
     bytez_model: str = os.getenv("BYTEZ_MODEL", "openai/gpt-5.1")
-    use_bytez: bool = False  # Use Groq instead of Bytez
+    use_bytez: bool = os.getenv("USE_BYTEZ", "false").strip().lower() in ("1", "true", "yes", "y")
     
     # Embedding Settings
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     
     # Storage Paths
-    base_path: str = "lightrag_storage"
-    graph_path: str = "lightrag_storage/knowledge_graph.gpickle"
-    chromadb_path: str = "lightrag_storage/chromadb"
-    entity_index_path: str = "lightrag_storage/entity_index.json"
+    base_path: str = os.getenv("LIGHTRAG_BASE_PATH", str(_DEFAULT_BASE_PATH))
+    graph_path: str = str(Path(base_path) / "knowledge_graph.gpickle")
+    chromadb_path: str = str(Path(base_path) / "chromadb")
+    entity_index_path: str = str(Path(base_path) / "entity_index.json")
     
     # Extraction Settings
     chunk_size: int = 800
@@ -60,7 +66,12 @@ class LightRAGConfig:
         os.makedirs(self.chromadb_path, exist_ok=True)
 
 
-def get_llm(config: LightRAGConfig = None, temperature: float = None):
+def get_llm(
+    config: LightRAGConfig = None,
+    temperature: float = None,
+    streaming: bool = False,
+    callbacks: Optional[Sequence[Any]] = None,
+):
     """
     Factory function to create the LLM based on config.
     Returns either BytezGPT (GPT-5.1) or ChatOpenAI (Groq).
@@ -72,6 +83,7 @@ def get_llm(config: LightRAGConfig = None, temperature: float = None):
     
     if config.use_bytez and config.bytez_api_key:
         from .bytez_llm import BytezGPT
+        # BytezGPT currently does not implement token streaming.
         return BytezGPT(
             model_id=config.bytez_model,
             api_key=config.bytez_api_key,
@@ -83,7 +95,10 @@ def get_llm(config: LightRAGConfig = None, temperature: float = None):
             model=config.llm_model,
             base_url=config.openai_api_base,
             api_key=config.openai_api_key,
-            temperature=temp
+            temperature=temp,
+            timeout=config.llm_timeout,
+            streaming=streaming,
+            callbacks=list(callbacks) if callbacks else None,
         )
 
 

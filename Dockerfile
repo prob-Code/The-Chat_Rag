@@ -1,4 +1,4 @@
-# Dockerfile for Render/Hugging Face Deployment
+# Dockerfile for Render/Cloud Deployment
 FROM python:3.11-slim
 
 # Set working directory
@@ -16,14 +16,14 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code (without binaries)
+# Copy application code
 COPY api.py .
-COPY ingest.py .
+COPY start_server.py .
 COPY rag_core/ ./rag_core/
-COPY data/ ./data/
+COPY static/ ./static/
 
-# Generate vector database during build
-RUN python ingest.py
+# Copy pre-built vector database (built with HuggingFace all-MiniLM-L6-v2)
+COPY gita_vector_db/ ./gita_vector_db/
 
 # Expose port
 EXPOSE 8000

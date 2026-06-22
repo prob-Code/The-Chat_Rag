@@ -72,8 +72,11 @@ def main():
         sys.exit(1)
 
     print("\nStarting server...")
-    print(f"API will be available at: http://{args.host}:{args.port}")
-    print(f"Documentation: http://{args.host}:{args.port}/docs")
+    browser_host = args.host
+    if browser_host == "0.0.0.0":
+        browser_host = "127.0.0.1"
+    print(f"API will be available at: http://{browser_host}:{args.port}")
+    print(f"Documentation: http://{browser_host}:{args.port}/docs")
     print("=" * 50)
     print()
 

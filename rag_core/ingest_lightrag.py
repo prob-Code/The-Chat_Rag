@@ -4,6 +4,7 @@ Extracts entities and relationships from religious texts and builds knowledge gr
 """
 import os
 import sys
+from pathlib import Path
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -139,7 +140,8 @@ def main():
     config = LightRAGConfig()
     
     # Ingest Bhagavad Gita
-    pdf_path = "data/bgita.pdf"
+    project_root = Path(__file__).resolve().parents[1]
+    pdf_path = str(project_root / "data" / "bgita.pdf")
     
     if not os.path.exists(pdf_path):
         print(f"Error: PDF not found at {pdf_path}")

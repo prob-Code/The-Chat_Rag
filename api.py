@@ -5,12 +5,16 @@ A compassionate spiritual guide API based on Bhagavad Gita wisdom
 import os
 import sys
 import logging
+import json
+import asyncio
+from functools import lru_cache
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from starlette.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -18,9 +22,40 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from langchain_community.vectorstores import FAISS
+try:
+    # Prefer remote embeddings when an API key is provided to avoid large local model requirements
+    from langchain.embeddings import OpenAIEmbeddings
+except Exception:
+    OpenAIEmbeddings = None
+
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import PromptTemplate
-from rag_core.bytez_llm import BytezGPT
+from rag_core.config import LightRAGConfig, get_llm
+from rag_core.streaming import TokenQueueCallbackHandler
+import requests
+import traceback
+
+
+def _llm_ping() -> bool:
+    """Quickly check whether the configured OpenAI-compatible LLM endpoint is reachable.
+
+    Returns True if reachable (or no external base configured), False otherwise.
+    """
+    base = os.getenv("OPENAI_API_BASE", "").strip()
+    if not base:
+        return True
+
+    # Try a lightweight GET to a common OpenAI-compatible path
+    test_paths = ["/models", "/v1/models", ""]
+    for p in test_paths:
+        url = base.rstrip("/") + p
+        try:
+            r = requests.get(url, timeout=2)
+            if r.status_code < 500:
+                return True
+        except Exception:
+            continue
+    return False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -35,21 +70,76 @@ db = None
 retriever = None
 llm = None
 chain = None
+prompt_template = None
+
+
+def _clamp_top_k(k: int) -> int:
+    # For fast TTFT, keep context small.
+    return max(1, min(5, int(k)))
+
+
+def _truncate_context(text: str) -> str:
+    max_context_chars = int(os.getenv("MAX_CONTEXT_CHARS", "6000"))
+    if max_context_chars > 0 and len(text) > max_context_chars:
+        return text[:max_context_chars] + "\n\n[...context truncated...]"
+    return text
+
+
+@lru_cache(maxsize=512)
+def _cached_query_embedding(query: str) -> tuple[float, ...]:
+    """LRU cache for query embeddings.
+
+    This helps repeated questions and reduces CPU time.
+    NOTE: This is per-process memory cache.
+    """
+    if embedding_model is None:
+        raise RuntimeError("Embedding model not loaded")
+    return tuple(embedding_model.embed_query(query))
+
+
+def _retrieve_docs_faiss(question: str, k: int):
+    """Retrieve top-k docs from FAISS using cached query embeddings."""
+    if db is None:
+        raise RuntimeError("Vector DB not loaded")
+    k = _clamp_top_k(k)
+    vector = list(_cached_query_embedding(question))
+    return db.similarity_search_by_vector(vector, k=k)
+
+
+def _docs_to_context(docs) -> str:
+    return _truncate_context("\n\n".join([d.page_content for d in docs]))
+
+
+def _sse(event: str | None, data) -> bytes:
+    """Encode a Server-Sent Event payload."""
+    payload = json.dumps(data, ensure_ascii=False)
+    if event:
+        return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
+    return f"data: {payload}\n\n".encode("utf-8")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan - load models on startup"""
-    global embedding_model, db, retriever, llm, chain
+    global embedding_model, db, retriever, llm, chain, prompt_template
 
     logger.info("Loading RagGita models...")
 
     try:
         # 1. Load embeddings
+        # IMPORTANT: Always use HuggingFace embeddings for FAISS since the DB
+        # was built with "all-MiniLM-L6-v2" (384 dimensions).
+        # OpenAI embeddings (1536 dims) would cause a dimension mismatch crash.
         logger.info("Loading embeddings model...")
-        embedding_model = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
-        )
+        force_local = os.getenv("FORCE_LOCAL_EMBEDDINGS", "true").strip().lower() in ("1", "true", "yes", "y")
+        if not force_local and os.getenv("OPENAI_API_KEY") and OpenAIEmbeddings is not None:
+            logger.info("OPENAI_API_KEY detected — using OpenAIEmbeddings (remote)")
+            embedding_model = OpenAIEmbeddings()
+        else:
+            logger.info("Using local HuggingFace embeddings (all-MiniLM-L6-v2)")
+            embedding_model = HuggingFaceEmbeddings(
+                model_name="sentence-transformers/all-MiniLM-L6-v2"
+            )
 
         # 2. Load vector DB
         logger.info("Loading FAISS vector database...")
@@ -60,22 +150,13 @@ async def lifespan(app: FastAPI):
         )
         retriever = db.as_retriever(search_kwargs={"k": 4})
 
-        # 3. Initialize LLM
-        logger.info("Initializing Bytez GPT...")
-        api_key = os.getenv("BYTEZ_API_KEY", "d58e5d706eddd608a4ff5b4153396c11")
-        model_id = os.getenv("BYTEZ_MODEL", "openai/gpt-5.1")
-
-        if not api_key:
-            raise ValueError("BYTEZ_API_KEY not set")
-
-        llm = BytezGPT(
-            model_id=model_id,
-            api_key=api_key,
-            temperature=0.7,
-        )
+        # 3. Initialize LLM (Bytez OR OpenAI-compatible like Ollama/Groq)
+        logger.info("Initializing LLM...")
+        config = LightRAGConfig()
+        llm = get_llm(config, temperature=0.7)
 
         # 4. Create prompt template
-        prompt = PromptTemplate(
+        prompt_template = PromptTemplate(
             input_variables=["context", "question"],
             template="""You are a compassionate spiritual guide trained in the wisdom of Bhagavad Gita.
 
@@ -97,16 +178,26 @@ Question:
 
 Respond with deep compassion. Speak as a caring friend who truly understands their pain.
 Make them feel heard, valued, and capable of overcoming this phase.
-Keep the tone warm, supportive, and never preachy."""
+Keep the tone warm, supportive, and never preachy.
+
+Formatting Requirements (IMPORTANT):
+- Output MUST be in Markdown.
+- Use these exact section headers (in this order):
+    1) **Empathy**
+    2) **Gita Guidance (In Simple Words)**
+    3) **From The Text**
+    4) **Try Today**
+    5) **Closing**
+- Keep it concise and scannable (prefer bullets)."""
         )
 
         # 5. Create chain
-        chain = prompt | llm
+        chain = prompt_template | llm
 
         logger.info("RagGita API is ready!")
 
     except Exception as e:
-        logger.error(f"Failed to load models: {e}")
+        logger.exception("Failed to load models")
         raise
 
     yield  # Server runs here
@@ -235,6 +326,9 @@ def chat_endpoint(request: ChatRequest):
         docs = retriever.invoke(request.question)
         context = "\n\n".join([d.page_content for d in docs])
 
+        # Guardrail: local models (e.g., Ollama) can crash on very large prompts.
+        context = _truncate_context(context)
+
         # Generate response
         answer = chain.invoke({
             "context": context,
@@ -247,10 +341,24 @@ def chat_endpoint(request: ChatRequest):
         )
 
     except Exception as e:
-        logger.error(f"Error in chat endpoint: {e}")
+        # Log full traceback
+        logger.exception("Error in chat endpoint")
+
+        # Detect backend connection problems (OpenAI/Groq/Ollama)
+        err_str = str(e).lower()
+        if "connection error" in err_str or isinstance(e, requests.RequestException):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    "LLM backend connection failed. "
+                    "Check OPENAI_API_BASE, network connectivity, and API key."
+                ),
+            )
+
+        # Generic 500 for other failures
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred: {str(e)}"
+            detail="An internal error occurred while generating the response."
         )
 
 
@@ -258,6 +366,155 @@ def chat_endpoint(request: ChatRequest):
 def ask_endpoint(request: ChatRequest):
     """Alias for /chat endpoint"""
     return chat_endpoint(request)
+
+
+@app.post("/chat_fast", response_model=ChatResponse)
+def chat_fast_endpoint(request: ChatRequest):
+    """Faster non-streaming endpoint.
+
+    Differences vs `/chat`:
+    - Uses cached embeddings for retrieval
+    - Clamps RAG context to top 3-5 chunks (default 4)
+    - Applies context truncation for local model stability
+    """
+    global chain, prompt_template
+
+    if not chain or prompt_template is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Models are not loaded yet. Please try again in a moment."
+        )
+
+    try:
+        if not _llm_ping():
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    "LLM backend is unreachable. "
+                    "Verify OPENAI_API_BASE and that the Groq/OpenAI-compatible endpoint is accessible."
+                ),
+            )
+
+        k = int(os.getenv("FAST_TOP_K", "4"))
+        docs = _retrieve_docs_faiss(request.question, k=k)
+        context = _docs_to_context(docs)
+
+        answer = chain.invoke({
+            "context": context,
+            "question": request.question
+        })
+
+        return ChatResponse(answer=answer.content, sources=[])
+    except Exception as e:
+        logger.exception("Error in chat_fast endpoint")
+        err_str = str(e).lower()
+        if "connection error" in err_str or isinstance(e, requests.RequestException):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    "LLM backend connection failed. "
+                    "Check OPENAI_API_BASE, network connectivity, and API key."
+                ),
+            )
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred while generating the response."
+        )
+
+
+@app.get("/chat/stream")
+async def chat_stream_endpoint(
+    request: Request,
+    question: str,
+    k: int = 4,
+):
+    """Stream tokens using Server-Sent Events (SSE).
+
+    This endpoint is designed for low-latency UX (fast TTFT):
+    - Retrieves only top 3-5 chunks
+    - Truncates context for stability on local runners
+
+    Client:
+      - Use EventSource with a URL-encoded `question` query param.
+    """
+    global embedding_model, db, prompt_template
+
+    if embedding_model is None or db is None or prompt_template is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Models are not loaded yet."
+        )
+
+    k = _clamp_top_k(k)
+
+    async def event_generator():
+        # Initial meta event
+        yield _sse("meta", {"status": "starting", "k": k})
+
+        try:
+            docs = await asyncio.to_thread(_retrieve_docs_faiss, question, k)
+            context = _docs_to_context(docs)
+        except Exception as e:
+            yield _sse("error", {"message": f"retrieval_failed: {str(e)}"})
+            return
+
+        # Build a streaming LLM chain.
+        handler = TokenQueueCallbackHandler()
+        config = LightRAGConfig()
+        if config.use_bytez:
+            # Bytez wrapper does not stream today; keep /chat for Bytez.
+            yield _sse(
+                "error",
+                {
+                    "message": "streaming_not_supported_for_bytez",
+                    "hint": "Set USE_BYTEZ=false in .env to stream via local Ollama/Groq."
+                },
+            )
+            return
+
+        stream_llm = get_llm(config, temperature=0.7, streaming=True, callbacks=[handler])
+        stream_chain = prompt_template | stream_llm
+
+        # Start generation in background.
+        async def run_generation():
+            try:
+                await stream_chain.ainvoke({"context": context, "question": question})
+            finally:
+                await handler.finish()
+
+        task = asyncio.create_task(run_generation())
+
+        # Stream tokens as they arrive.
+        try:
+            yield _sse("meta", {"status": "generating"})
+            async for token in handler.aiter_tokens(timeout_s=15.0):
+                if await request.is_disconnected():
+                    break
+
+                if token is None:
+                    # Keep-alive comment (not an event)
+                    yield b": ping\n\n"
+                    continue
+
+                yield _sse(None, {"token": token})
+        except Exception as e:
+            yield _sse("error", {"message": f"generation_failed: {str(e)}"})
+        finally:
+            if not task.done():
+                task.cancel()
+            yield _sse("done", {"ok": True})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Prevent proxy buffering (nginx)
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ======================
