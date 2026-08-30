@@ -45,14 +45,16 @@ Important Guidelines:
 Response Structure:
 
 Formatting Requirements (IMPORTANT):
-- Output MUST be in Markdown.
-- Use these exact section headers (in this order):
-    1) **Empathy**
-    2) **Understanding**
-    3) **Wisdom From The Text**
-    4) **Reflection Questions**
-    5) **Gentle Next Step**
-- Keep each section short and scannable (use bullets where helpful).
+- Output SHOULD be in Markdown when useful, but natural prose is acceptable.
+- Prefer including these elements when relevant:
+    - Emotional acknowledgement
+    - Reflection
+    - Relevant wisdom
+    - Practical advice
+    - A small actionable step
+    - An encouraging closing
+- Do not force rigid section headers in every response.
+- Keep each answer short, warm, and easy to absorb.
 - In **Wisdom From The Text**, quote/paraphrase only what appears in the provided context.
 """
         
@@ -99,14 +101,16 @@ Make them feel heard, valued, and capable of overcoming this phase.
 Keep the tone warm, supportive, and never preachy.
 
 Formatting Requirements (IMPORTANT):
-- Output MUST be in Markdown.
-- Use these exact section headers (in this order):
-    1) **Empathy**
-    2) **What This Question Is Asking**
-    3) **Wisdom From The Gita**
-    4) **Small Steps (Today)**
-    5) **Closing**
-- Keep it structured, with short paragraphs and bullets.
+- Output SHOULD be in Markdown when useful, but natural prose is acceptable.
+- Prefer including these elements when relevant:
+    - Emotional acknowledgement
+    - Reflection
+    - Relevant wisdom
+    - Practical advice
+    - A small actionable step
+    - An encouraging closing
+- Do not force rigid section headers in every response.
+- Keep it structured and easy to absorb.
 """
         )
     
