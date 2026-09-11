@@ -47,6 +47,8 @@ from rag_core.gita_map import public_classes
 from rag_core.guard import enforce as guard_enforce
 
 import requests
+import uuid
+import traceback
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -281,9 +283,26 @@ def _generate(question: str, user_class: str, lang: str, retrieve) -> ChatRespon
                         user_class=meta["user_class"], lang=meta["lang"])
 
 
+# Errors ko chhupana band. Pehle har 500 ek hi generic line deta tha, jisse
+# har baar CloudWatch khodna padta tha aur guess karna padta tha. Ab:
+#   - poora traceback ek short error id ke saath log hota hai
+#   - DEBUG_ERRORS=true pe asli exception response me bhi aata hai
+# Public launch se pehle DEBUG_ERRORS=false kar dena.
+def _debug_errors() -> bool:
+    return os.getenv("DEBUG_ERRORS", "true").strip().lower() in ("1", "true", "yes", "y")
+
+
+def _detail(generic: str, e: Exception, err_id: str) -> str:
+    if _debug_errors():
+        return f"{generic} [{err_id}] {type(e).__name__}: {str(e)[:400]}"
+    return f"{generic} (ref {err_id})"
+
+
 def _handle_llm_error(e: Exception):
-    """Exception ko sahi HTTP response me badlo."""
-    logger.exception("Generation failed")
+    """Exception ko sahi HTTP response me badlo, aur asli wajah batao."""
+    err_id = uuid.uuid4().hex[:8]
+    logger.error("[%s] generation failed: %s: %s\n%s",
+                 err_id, type(e).__name__, e, traceback.format_exc())
 
     if _is_upstream_rate_limit(e):
         raise HTTPException(
@@ -296,12 +315,12 @@ def _handle_llm_error(e: Exception):
     if "connection error" in err_str or isinstance(e, requests.RequestException):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="LLM backend connection failed. Check OPENAI_API_BASE, network and API key.",
+            detail=_detail("LLM backend connection failed.", e, err_id),
         )
 
     raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail="An internal error occurred while generating the response."
+        detail=_detail("Could not generate a reply.", e, err_id),
     )
 
 
@@ -589,6 +608,87 @@ def tts_endpoint(payload: TTSRequest, request: Request):
                 headers={"Retry-After": "10"},
             )
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Text-to-speech failed.")
+
+
+# ======================
+# Diagnostics
+# ======================
+# Ek URL jo khud bata deta hai kaunsa hissa toota hai — embeddings, retrieval,
+# LLM ya TTS. Iske bina har baar CloudWatch khodna padta tha aur guess karna
+# padta tha. Token se guarded hai kyunki yeh asli API calls karta hai.
+
+@app.get("/diag")
+def diag_endpoint(token: str = ""):
+    """GET /diag?token=<DIAG_TOKEN> — har hisse ko alag-alag test karta hai."""
+    expected = os.getenv("DIAG_TOKEN", "").strip()
+    if not expected:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Diagnostics are off. Set a DIAG_TOKEN environment variable to enable.",
+        )
+    if token != expected:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bad token.")
+
+    report = {"checks": [], "config": {}}
+
+    def check(name, fn):
+        try:
+            report["checks"].append({"name": name, "ok": True, "info": fn()})
+        except Exception as e:
+            report["checks"].append({
+                "name": name, "ok": False,
+                "error": f"{type(e).__name__}: {str(e)[:300]}",
+            })
+
+    # Kaunse env vars set hain — values kabhi nahi, sirf haan/na
+    for key in ("OPENAI_API_KEY", "HF_TOKEN", "OPENAI_API_BASE", "LLM_MODEL",
+                "USE_REMOTE_EMBEDDINGS", "ENABLE_TTS", "TTS_MODEL", "TTS_VOICE",
+                "LIGHTRAG_BASE_PATH", "DEBUG_ERRORS"):
+        val = os.getenv(key, "")
+        if key.endswith("_KEY") or key.endswith("TOKEN"):
+            report["config"][key] = f"set ({len(val)} chars)" if val else "MISSING"
+        else:
+            report["config"][key] = val or "(default)"
+
+    check("startup", lambda: {
+        "embedding_model": embedding_model is not None,
+        "vector_db": db is not None,
+        "retriever": retriever is not None,
+        "llm": llm is not None,
+    })
+
+    def _embed():
+        v = embedding_model.embed_query("test")
+        return {"dimensions": len(v)}
+    check("embeddings", _embed)
+
+    def _retrieve():
+        docs = retriever.invoke("what is dharma")
+        return {"docs": len(docs), "first_chars": len(docs[0].page_content) if docs else 0}
+    check("retrieval", _retrieve)
+
+    def _llm():
+        from rag_core.prompts import analyse
+        prompt, meta = analyse("hi", "auto", "en")
+        out = (prompt | llm).invoke({"question": "hi"})
+        return {"intent": meta["intent"], "reply_chars": len(out.content)}
+    check("llm", _llm)
+
+    def _tts():
+        if not _tts_enabled():
+            return {"skipped": "TTS disabled or no key"}
+        from openai import OpenAI
+        c = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        sp = c.audio.speech.create(
+            model=os.getenv("TTS_MODEL", "gpt-4o-mini-tts"),
+            voice=os.getenv("TTS_VOICE", "ballad"),
+            input="test", response_format="mp3",
+        )
+        return {"bytes": len(sp.read())}
+    check("tts", _tts)
+
+    report["all_ok"] = all(c["ok"] for c in report["checks"])
+    return report
 
 
 if __name__ == "__main__":
