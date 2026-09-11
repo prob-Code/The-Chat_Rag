@@ -2,6 +2,7 @@
 LightRAG Configuration Settings
 """
 import os
+import tempfile
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Sequence, Any
@@ -66,9 +67,32 @@ class LightRAGConfig:
     )
 
     def __post_init__(self):
-        """Create storage directories if they don't exist"""
-        os.makedirs(self.base_path, exist_ok=True)
-        os.makedirs(self.chromadb_path, exist_ok=True)
+        """Storage directories banao — par read-only filesystem pe gir mat jao.
+
+        AWS Lambda pe poora filesystem read-only hota hai, sirf /tmp likhne
+        layak hai. Pehle yahan seedha os.makedirs tha, jo Lambda pe
+        'Read-only file system' error deta tha — aur chunki LightRAGConfig()
+        startup me banta hai, poora app hi nahi chalta tha aur har request
+        500 deti thi.
+
+        Yeh directories sirf LightRAG/ChromaDB ke liye hain, jo serving path
+        me use hi nahi hote (RAG FAISS se chalta hai). Isliye na ban paayein
+        toh bhi chalega — chupchaap /tmp pe shift ho jao.
+        """
+        try:
+            os.makedirs(self.base_path, exist_ok=True)
+            os.makedirs(self.chromadb_path, exist_ok=True)
+        except OSError:
+            fallback = Path(tempfile.gettempdir()) / "lightrag_storage"
+            try:
+                self.base_path = str(fallback)
+                self.chromadb_path = str(fallback / "chromadb")
+                self.graph_path = str(fallback / "knowledge_graph.gpickle")
+                self.entity_index_path = str(fallback / "entity_index.json")
+                os.makedirs(self.chromadb_path, exist_ok=True)
+            except OSError:
+                # Yahan tak aa gaye toh bhi serving path chalta rahega.
+                pass
 
 
 def get_llm(
