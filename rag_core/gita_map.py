@@ -222,6 +222,11 @@ CLASSES = {
             "lost", "no direction", "confused", "don't know what", "dont know what",
             "purpose", "meaning", "career", "everyone else", "behind", "comparison",
             "samajh nahi", "kya karu", "kya karoon",
+            # comparison-with-peers phrasings (live testing me yeh miss ho rahe the)
+            "everyone in my", "everyone has", "everybody has", "already has",
+            "already got", "i have nothing", "nothing to show", "falling behind",
+            "left behind", "compared to", "ahead of me", "sabke paas",
+            "mere paas kuch nahi", "peeche reh",
         ],
     },
     "seeking": {
