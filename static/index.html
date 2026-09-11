@@ -707,17 +707,43 @@ function stripMarkdown(t) {
 
 // Dono speak functions promise return karte hain jo bolna khatam hone pe resolve hota hai —
 // talk mode ka loop isi pe chalta hai.
+// Chrome voices ASYNC load karta hai — page load pe getVoices() khali array
+// deta hai. Isliye ek baar warm kar lete hain aur cache rakhte hain, warna
+// pehla reply hamesha default American awaaz me jaata tha.
+let _voiceCache = [];
+function warmVoices() {
+  if (!('speechSynthesis' in window)) return;
+  const load = () => { _voiceCache = window.speechSynthesis.getVoices() || []; };
+  load();
+  window.speechSynthesis.onvoiceschanged = load;
+}
+warmVoices();
+
+// Indian awaaz dhoondo — lang code se bhi, naam se bhi.
+// Windows pe "Microsoft Neerja/Prabhat", Android pe "Google हिन्दी",
+// macOS pe "Rishi" — inke lang tags hamesha en-IN nahi hote.
+const _INDIAN_NAME = /neerja|prabhat|heera|ravi|aditi|rishi|kalpana|hemant|india|hindi|हिन|मराठी/i;
+
+function pickIndianVoice() {
+  const v = _voiceCache.length ? _voiceCache : (window.speechSynthesis.getVoices() || []);
+  return v.find(x => /^en[-_]IN/i.test(x.lang))
+      || v.find(x => _INDIAN_NAME.test(x.name))
+      || v.find(x => /^hi[-_]IN/i.test(x.lang))
+      || v.find(x => /^en[-_]GB/i.test(x.lang))     // US se kareeb lagti hai
+      || v.find(x => /^en/i.test(x.lang))
+      || null;
+}
+
 function browserSpeak(text) {
   return new Promise((resolve) => {
     if (!('speechSynthesis' in window)) { showError('Voice output not supported in this browser.'); resolve(); return; }
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(stripMarkdown(text));
-    u.lang = SPEECH_LANG;
-    u.rate = 0.92;   // thoda dheere — calmer lagta hai
+    const voice = pickIndianVoice();
+    if (voice) { u.voice = voice; u.lang = voice.lang; }
+    else { u.lang = SPEECH_LANG; }
+    u.rate = 0.88;   // dheere — Indian English yahan zyada natural lagti hai
     u.pitch = 0.95;
-    const voices = window.speechSynthesis.getVoices();
-    const preferred = voices.find(v => /en-IN|hi-IN/i.test(v.lang)) || voices.find(v => /en-GB|en-US/i.test(v.lang));
-    if (preferred) u.voice = preferred;
     u.onend = resolve;
     u.onerror = resolve;   // fail ho toh bhi loop atakna nahi chahiye
     window.speechSynthesis.speak(u);
