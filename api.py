@@ -39,7 +39,7 @@ except ImportError:
 from langchain_huggingface import HuggingFaceEmbeddings
 from rag_core.config import LightRAGConfig, get_llm
 from rag_core.streaming import TokenQueueCallbackHandler
-from rag_core.prompts import build_prompt, get_prompt_template, is_crisis, CRISIS_REPLY
+from rag_core.prompts import analyse, build_prompt, get_prompt_template, is_crisis, CRISIS_REPLY
 from rag_core.gita_map import public_classes
 from rag_core.guard import enforce as guard_enforce
 
@@ -252,12 +252,24 @@ class HealthResponse(BaseModel):
 # Core logic
 # ======================
 
-def _generate(question: str, user_class: str, context: str) -> ChatResponse:
-    """Prompt banao, LLM chalao, response wapas do."""
-    prompt, resolved_class = build_prompt(question, user_class)
+def _generate(question: str, user_class: str, retrieve) -> ChatResponse:
+    """Intent + class decide karo, zaroorat ho tabhi retrieve karo, phir LLM chalao.
+
+    `retrieve` ek callable hai jo context string laata hai. Use TABHI bulate hain
+    jab prompt ko sach me Gita context chahiye — greeting aur off-topic pe
+    embedding call aur FAISS search dono bach jaate hain.
+    """
+    prompt, meta = analyse(question, user_class)
+
+    variables = {"question": question}
+    if "context" in prompt.input_variables:
+        variables["context"] = retrieve() if meta["needs_rag"] else ""
+
+    logger.info("intent=%s class=%s rag=%s", meta["intent"], meta["user_class"], meta["needs_rag"])
+
     chain = prompt | llm
-    answer = chain.invoke({"context": context, "question": question})
-    return ChatResponse(answer=answer.content, sources=[], user_class=resolved_class)
+    answer = chain.invoke(variables)
+    return ChatResponse(answer=answer.content, sources=[], user_class=meta["user_class"])
 
 
 def _handle_llm_error(e: Exception):
@@ -332,9 +344,11 @@ def chat_endpoint(payload: ChatRequest, request: Request):
     guard_enforce(request, is_crisis_message=False)
 
     try:
-        docs = retriever.invoke(payload.question)
-        context = _truncate_context("\n\n".join([d.page_content for d in docs]))
-        return _generate(payload.question, payload.user_class, context)
+        def retrieve():
+            docs = retriever.invoke(payload.question)
+            return _truncate_context("\n\n".join([d.page_content for d in docs]))
+
+        return _generate(payload.question, payload.user_class, retrieve)
     except HTTPException:
         raise
     except Exception as e:
@@ -363,10 +377,11 @@ def chat_fast_endpoint(payload: ChatRequest, request: Request):
     guard_enforce(request, is_crisis_message=False)
 
     try:
-        k = int(os.getenv("FAST_TOP_K", "3"))
-        docs = _retrieve_docs_faiss(payload.question, k=k)
-        context = _docs_to_context(docs)
-        return _generate(payload.question, payload.user_class, context)
+        def retrieve():
+            k = int(os.getenv("FAST_TOP_K", "3"))
+            return _docs_to_context(_retrieve_docs_faiss(payload.question, k=k))
+
+        return _generate(payload.question, payload.user_class, retrieve)
     except HTTPException:
         raise
     except Exception as e:
@@ -417,13 +432,17 @@ async def chat_stream_endpoint(
             })
             return
 
-        stream_prompt, _resolved = build_prompt(question, user_class)
+        stream_prompt, _meta = analyse(question, user_class)
         stream_llm = get_llm(config, streaming=True, callbacks=[handler])
         stream_chain = stream_prompt | stream_llm
 
+        stream_vars = {"question": question}
+        if "context" in stream_prompt.input_variables:
+            stream_vars["context"] = context
+
         async def run_generation():
             try:
-                await stream_chain.ainvoke({"context": context, "question": question})
+                await stream_chain.ainvoke(stream_vars)
             finally:
                 await handler.finish()
 

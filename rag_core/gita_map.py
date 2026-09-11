@@ -117,8 +117,11 @@ CLASSES = {
         "tone": (
             "They are flat, heavy, or empty. Energy is the scarce resource, not insight. "
             "Match their register - quiet and level, never bright or motivating. "
-            "Your one suggestion must be almost embarrassingly small: a glass of water, "
-            "opening a window, sitting up. Physical and tiny, never a project."
+            "Your one suggestion must be almost embarrassingly small: something that takes "
+            "under a minute, needs no decision and no leaving the room. "
+            "Build it out of the specific thing they described. "
+            "Do not fall back on a stock suggestion - if it would fit any stranger equally "
+            "well, it is the wrong one."
         ),
         "avoid": (
             "Do not encourage them to be strong, to fight, or to push through. "
@@ -228,6 +231,24 @@ CLASSES = {
             "left behind", "compared to", "ahead of me", "sabke paas",
             "mere paas kuch nahi", "peeche reh",
         ],
+    },
+    "general": {
+        "label": "Just talking",
+        "emoji": "🌿",
+        "anchors": ["2.14", "6.26", "2.47"],
+        "tone": (
+            "You do not yet know what they are carrying, and they have not told you. "
+            "Respond to what they actually said and nothing more. "
+            "If their message is unclear or very short, it is better to ask one simple, "
+            "unhurried question than to guess at a feeling. "
+            "Stay warm and level."
+        ),
+        "avoid": (
+            "Do not assume they are sad, low, anxious or struggling - you have no evidence of that. "
+            "Do not name a feeling they did not describe. "
+            "Do not offer a coping step for a problem they have not mentioned."
+        ),
+        "cues": [],
     },
     "seeking": {
         "label": "Just curious",
