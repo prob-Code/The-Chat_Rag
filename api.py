@@ -227,6 +227,8 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
     user_class: str = Field(default="auto", max_length=32)
+    lang: str = Field(default="en", max_length=16,
+                      description="Reply language: en, hi (Devanagari), hi-latn (Hinglish)")
 
     class Config:
         json_schema_extra = {
@@ -244,6 +246,7 @@ class ChatResponse(BaseModel):
 
 class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=4000)
+    lang: str = Field(default="en", max_length=16)
 
 
 class HealthResponse(BaseModel):
@@ -345,7 +348,9 @@ def chat_endpoint(payload: ChatRequest, request: Request):
     crisis = is_crisis(payload.question)
     if crisis:
         logger.info("Crisis guard triggered; returning helpline response.")
-        return ChatResponse(answer=CRISIS_REPLY, sources=[], user_class="crisis", crisis=True)
+        return ChatResponse(answer=crisis_reply(payload.lang), sources=[],
+                            user_class="crisis", lang=normalise_lang(payload.lang),
+                            crisis=True)
 
     guard_enforce(request, is_crisis_message=False)
 
@@ -378,7 +383,9 @@ def chat_fast_endpoint(payload: ChatRequest, request: Request):
 
     if is_crisis(payload.question):
         logger.info("Crisis guard triggered; returning helpline response.")
-        return ChatResponse(answer=CRISIS_REPLY, sources=[], user_class="crisis", crisis=True)
+        return ChatResponse(answer=crisis_reply(payload.lang), sources=[],
+                            user_class="crisis", lang=normalise_lang(payload.lang),
+                            crisis=True)
 
     guard_enforce(request, is_crisis_message=False)
 
