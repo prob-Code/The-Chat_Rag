@@ -7,24 +7,35 @@
 # Web Adapter Lambda ke bahar inert rehta hai, isliye alag Dockerfile.lambda
 # rakhne ki zaroorat nahi. Ek image, sab targets.
 
-FROM python:3.11-slim
+# ── AWS Lambda Web Adapter ──────────────────────────────────
+# Yeh extension Lambda Runtime API handle karta hai aur invocations ko
+# tumhare uvicorn server pe proxy karta hai — isi wajah se api.py me ek
+# line bhi badalni nahi padti.
+#
+# --platform DONO jagah pin kiya hua hai (yahan aur neeche base image pe).
+# Adapter image multi-arch hai; bina pin ke builder kabhi arm64 binary
+# utha leta hai, aur phir Lambda pe yeh error aata hai:
+#   Extension.LaunchError / ProcessSpawnFailed
+# Lambda function ka architecture bhi x86_64 hi hona chahiye.
+FROM --platform=linux/amd64 public.ecr.aws/awsguru/aws-lambda-adapter:1.0.1 AS adapter
+
+FROM --platform=linux/amd64 python:3.11-slim
 
 WORKDIR /app
 
-# ── AWS Lambda Web Adapter ──────────────────────────────────
-# Yeh extension Lambda Runtime API ko handle karta hai aur invocations
-# ko tumhare uvicorn server pe proxy kar deta hai. Isi wajah se api.py
-# me ek line bhi badalni nahi padti.
-# Version pin kiya hua hai — "latest" mat karna, silently toot sakta hai.
-COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.0.1 /lambda-adapter /opt/extensions/lambda-adapter
+COPY --from=adapter /lambda-adapter /opt/extensions/lambda-adapter
 
-# gcc chahiye kuch wheels ke liye; build ke baad hata dete hain
-RUN apt-get update && apt-get install -y --no-install-recommends gcc \
-    && rm -rf /var/lib/apt/lists/*
+# NOTE: gcc yahan jaan-boojh ke install NAHI hota.
+# Saari dependencies (faiss-cpu, numpy, pydantic, uvloop, tokenizers)
+# prebuilt manylinux wheels me aati hain — kuch compile nahi hota.
+# Pehle gcc install kar rahe the, aur wahi 40s ka step Docker Desktop ko
+# memory pe maar raha tha. Agar kabhi koi package sach me compile maange,
+# error saaf "gcc not found" bolega — tab yeh wapas add kar dena:
+#   RUN apt-get update && apt-get install -y --no-install-recommends gcc \
+#       && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
-    && apt-get purge -y gcc && apt-get autoremove -y
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Application code
 COPY api.py .
