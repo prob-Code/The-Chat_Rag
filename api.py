@@ -39,7 +39,10 @@ except ImportError:
 from langchain_huggingface import HuggingFaceEmbeddings
 from rag_core.config import LightRAGConfig, get_llm
 from rag_core.streaming import TokenQueueCallbackHandler
-from rag_core.prompts import analyse, build_prompt, get_prompt_template, is_crisis, CRISIS_REPLY
+from rag_core.prompts import (
+    analyse, get_prompt_template, is_crisis,
+    crisis_reply, normalise_lang, public_langs, DEFAULT_LANG,
+)
 from rag_core.gita_map import public_classes
 from rag_core.guard import enforce as guard_enforce
 
@@ -235,6 +238,7 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list = Field(default=[])
     user_class: str = Field(default="auto")
+    lang: str = Field(default="en")
     crisis: bool = Field(default=False)
 
 
@@ -252,24 +256,26 @@ class HealthResponse(BaseModel):
 # Core logic
 # ======================
 
-def _generate(question: str, user_class: str, retrieve) -> ChatResponse:
+def _generate(question: str, user_class: str, lang: str, retrieve) -> ChatResponse:
     """Intent + class decide karo, zaroorat ho tabhi retrieve karo, phir LLM chalao.
 
     `retrieve` ek callable hai jo context string laata hai. Use TABHI bulate hain
     jab prompt ko sach me Gita context chahiye — greeting aur off-topic pe
     embedding call aur FAISS search dono bach jaate hain.
     """
-    prompt, meta = analyse(question, user_class)
+    prompt, meta = analyse(question, user_class, lang)
 
     variables = {"question": question}
     if "context" in prompt.input_variables:
         variables["context"] = retrieve() if meta["needs_rag"] else ""
 
-    logger.info("intent=%s class=%s rag=%s", meta["intent"], meta["user_class"], meta["needs_rag"])
+    logger.info("intent=%s class=%s lang=%s rag=%s",
+                meta["intent"], meta["user_class"], meta["lang"], meta["needs_rag"])
 
     chain = prompt | llm
     answer = chain.invoke(variables)
-    return ChatResponse(answer=answer.content, sources=[], user_class=meta["user_class"])
+    return ChatResponse(answer=answer.content, sources=[],
+                        user_class=meta["user_class"], lang=meta["lang"])
 
 
 def _handle_llm_error(e: Exception):
@@ -322,7 +328,7 @@ def health_check():
 
 @app.get("/classes")
 def list_classes():
-    return {"classes": public_classes(), "tts_enabled": _tts_enabled()}
+    return {"classes": public_classes(), "langs": public_langs(), "tts_enabled": _tts_enabled()}
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -348,7 +354,7 @@ def chat_endpoint(payload: ChatRequest, request: Request):
             docs = retriever.invoke(payload.question)
             return _truncate_context("\n\n".join([d.page_content for d in docs]))
 
-        return _generate(payload.question, payload.user_class, retrieve)
+        return _generate(payload.question, payload.user_class, payload.lang, retrieve)
     except HTTPException:
         raise
     except Exception as e:
@@ -381,7 +387,7 @@ def chat_fast_endpoint(payload: ChatRequest, request: Request):
             k = int(os.getenv("FAST_TOP_K", "3"))
             return _docs_to_context(_retrieve_docs_faiss(payload.question, k=k))
 
-        return _generate(payload.question, payload.user_class, retrieve)
+        return _generate(payload.question, payload.user_class, payload.lang, retrieve)
     except HTTPException:
         raise
     except Exception as e:
@@ -394,6 +400,7 @@ async def chat_stream_endpoint(
     question: str,
     k: int = 3,
     user_class: str = "auto",
+    lang: str = DEFAULT_LANG,
 ):
     """Stream tokens using Server-Sent Events (SSE)."""
     if embedding_model is None or db is None:
@@ -405,7 +412,7 @@ async def chat_stream_endpoint(
     if is_crisis(question):
         async def crisis_gen():
             yield _sse("meta", {"status": "crisis"})
-            yield _sse(None, {"token": CRISIS_REPLY})
+            yield _sse(None, {"token": crisis_reply(lang)})
             yield _sse("done", {"ok": True})
         return StreamingResponse(crisis_gen(), media_type="text/event-stream")
 
@@ -432,7 +439,7 @@ async def chat_stream_endpoint(
             })
             return
 
-        stream_prompt, _meta = analyse(question, user_class)
+        stream_prompt, _meta = analyse(question, user_class, lang)
         stream_llm = get_llm(config, streaming=True, callbacks=[handler])
         stream_chain = stream_prompt | stream_llm
 
@@ -486,11 +493,31 @@ def _tts_enabled() -> bool:
     )
 
 
-_TTS_INSTRUCTIONS = os.getenv(
-    "TTS_INSTRUCTIONS",
-    "Speak slowly and softly, like someone sitting beside a tired friend late at night. "
-    "Warm and steady, never bright or performative. Leave small pauses between sentences.",
+# Voice ko "calming" banane ke teen lever hain, aur instructions sabse strong hai.
+# Yeh deliberately detailed hai — gpt-4o-mini-tts choti-choti hint se zyada
+# poori tasveer follow karta hai.
+_CALM_EN = (
+    "Speak very slowly and very softly, low and warm in your register, as if you are "
+    "sitting beside someone who is exhausted and close to sleep. A natural Indian English "
+    "accent, the way a kind Indian elder speaks. Let each sentence settle completely before "
+    "the next one begins - leave a real pause there, not a rushed breath. Never bright, "
+    "never cheerful, never rising at the end of a sentence. Pronounce Sanskrit and Hindi "
+    "words the Indian way, not the anglicised way: dharma, karma, Krishna, Arjun, yog, shanti."
 )
+
+_CALM_HI = (
+    "Speak in gentle, everyday spoken Hindi with a soft natural Indian accent. Very slow and "
+    "very quiet, low and warm in your register, as if sitting beside someone who is exhausted "
+    "and close to sleep. Leave a real pause between sentences. Never bright, never hurried, "
+    "and never like a newsreader - this is one person speaking quietly at night, not an "
+    "announcement. Use the relaxed pronunciation of conversation, not of recitation."
+)
+
+_TTS_INSTRUCTIONS = {
+    "en":      os.getenv("TTS_INSTRUCTIONS_EN", os.getenv("TTS_INSTRUCTIONS", _CALM_EN)),
+    "hi":      os.getenv("TTS_INSTRUCTIONS_HI", _CALM_HI),
+    "hi-latn": os.getenv("TTS_INSTRUCTIONS_HI", _CALM_HI),
+}
 
 
 @app.post("/tts")
@@ -514,14 +541,29 @@ def tts_endpoint(payload: TTSRequest, request: Request):
         )
 
         clean = payload.text.replace("*", "").replace("#", "").replace("`", "")
+        lg = normalise_lang(payload.lang)
 
-        speech = client.audio.speech.create(
+        kwargs = dict(
             model=os.getenv("TTS_MODEL", "gpt-4o-mini-tts"),
-            voice=os.getenv("TTS_VOICE", "sage"),
+            # 'ballad' gentle aur kahani-jaisi hai; 'sage' aur 'coral' bhi try karo.
+            voice=os.getenv("TTS_VOICE", "ballad"),
             input=clean[:4000],
-            instructions=_TTS_INSTRUCTIONS,
+            instructions=_TTS_INSTRUCTIONS[lg],
             response_format="mp3",
         )
+
+        # speed sirf tab bhejte hain jab explicitly set ho. gpt-4o-mini-tts
+        # tone instructions se control karta hai, aur unsupported param pe
+        # error de sakta hai — isliye opt-in rakha hai. 0.9 dhima aur natural hai.
+        speed = os.getenv("TTS_SPEED", "").strip()
+        if speed:
+            kwargs["speed"] = float(speed)
+
+        try:
+            speech = client.audio.speech.create(**kwargs)
+        except TypeError:
+            kwargs.pop("speed", None)
+            speech = client.audio.speech.create(**kwargs)
 
         return Response(
             content=speech.read(),
