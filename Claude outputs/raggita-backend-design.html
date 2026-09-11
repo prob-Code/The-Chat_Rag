@@ -1,0 +1,795 @@
+<title>RagGita Backend Design</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Spectral:wght@500;600;700&display=swap">
+
+<style>
+:root {
+  --paper:      #fbf9f6;
+  --surface:    #f3efe9;
+  --ink:        #17141d;
+  --muted:      #6b6578;
+  --hair:       #dfd8ce;
+  --gold:       #9c6f1f;
+  --gold-soft:  rgba(156, 111, 31, 0.10);
+  --rose:       #a33a4c;
+  --rose-soft:  rgba(163, 58, 76, 0.09);
+  --teal:       #1d6058;
+  --teal-soft:  rgba(29, 96, 88, 0.09);
+
+  --serif: 'Spectral', Georgia, 'Times New Roman', serif;
+  --sans:  'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono:  'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --measure: 68ch;
+  --wide: 1020px;
+}
+
+/* Dark theme — tokens only, never component rules */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:      #100e16;
+    --surface:    #191622;
+    --ink:        #e9e5f0;
+    --muted:      #9c95ab;
+    --hair:       #2e293b;
+    --gold:       #d9a94a;
+    --gold-soft:  rgba(217, 169, 74, 0.12);
+    --rose:       #e0798c;
+    --rose-soft:  rgba(224, 121, 140, 0.12);
+    --teal:       #5fc4b5;
+    --teal-soft:  rgba(95, 196, 181, 0.12);
+  }
+}
+:root[data-theme="dark"] {
+  --paper:      #100e16;
+  --surface:    #191622;
+  --ink:        #e9e5f0;
+  --muted:      #9c95ab;
+  --hair:       #2e293b;
+  --gold:       #d9a94a;
+  --gold-soft:  rgba(217, 169, 74, 0.12);
+  --rose:       #e0798c;
+  --rose-soft:  rgba(224, 121, 140, 0.12);
+  --teal:       #5fc4b5;
+  --teal-soft:  rgba(95, 196, 181, 0.12);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16.5px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  max-width: var(--wide);
+  margin: 0 auto;
+  padding-inline: 20px;
+  padding-block: 56px 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 44px;
+}
+
+.col { max-width: var(--measure); }
+
+/* ── Masthead ───────────────────────────── */
+.masthead { display: flex; flex-direction: column; gap: 14px; }
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+h1 {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: clamp(2.1rem, 5vw, 3.05rem);
+  line-height: 1.08;
+  letter-spacing: -0.015em;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.standfirst {
+  font-size: 1.08rem;
+  color: var(--muted);
+  max-width: var(--measure);
+  margin: 0;
+}
+
+.decisions {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 6px;
+}
+.chip {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 5px 11px;
+  border: 1px solid var(--hair);
+  border-radius: 3px;
+  color: var(--muted);
+  background: var(--surface);
+}
+.chip b { color: var(--ink); font-weight: 500; }
+
+/* ── Sections ───────────────────────────── */
+section { display: flex; flex-direction: column; gap: 18px; }
+
+h2 {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 1.62rem;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  margin: 0;
+  padding-top: 22px;
+  border-top: 1px solid var(--hair);
+  text-wrap: balance;
+}
+
+h3 {
+  font-family: var(--sans);
+  font-weight: 600;
+  font-size: 1.02rem;
+  margin: 0;
+  letter-spacing: 0.005em;
+}
+
+p { margin: 0; max-width: var(--measure); }
+.col > p + p, section > p + p { margin-top: -4px; }
+
+ul, ol { margin: 0; padding-left: 1.15rem; max-width: var(--measure); display: flex; flex-direction: column; gap: 7px; }
+li::marker { color: var(--muted); }
+
+code {
+  font-family: var(--mono);
+  font-size: 0.87em;
+  background: var(--surface);
+  border: 1px solid var(--hair);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+a { color: var(--gold); text-underline-offset: 2px; }
+
+strong { font-weight: 600; }
+
+/* ── Figures ────────────────────────────── */
+figure {
+  margin: 6px 0;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.figbox {
+  border: 1px solid var(--hair);
+  background: var(--surface);
+  border-radius: 4px;
+  padding: 20px 16px;
+  overflow-x: auto;
+}
+figure svg { display: block; width: 100%; height: auto; min-width: 640px; color: var(--ink); }
+figcaption {
+  font-size: 13.5px;
+  color: var(--muted);
+  max-width: var(--measure);
+}
+figcaption b { color: var(--ink); font-weight: 500; }
+
+/* ── Callouts ───────────────────────────── */
+.note {
+  border-left: 2px solid var(--gold);
+  background: var(--gold-soft);
+  padding: 14px 16px;
+  max-width: var(--measure);
+  display: flex; flex-direction: column; gap: 7px;
+  border-radius: 0 3px 3px 0;
+}
+.note.risk  { border-left-color: var(--rose); background: var(--rose-soft); }
+.note.done  { border-left-color: var(--teal); background: var(--teal-soft); }
+.note p { max-width: none; }
+.note .lbl {
+  font-family: var(--mono);
+  font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--gold);
+}
+.note.risk .lbl { color: var(--rose); }
+.note.done .lbl { color: var(--teal); }
+
+/* ── Tables ─────────────────────────────── */
+.tablewrap { overflow-x: auto; border: 1px solid var(--hair); border-radius: 4px; }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 520px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+thead th {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted); font-weight: 500;
+  background: var(--surface);
+}
+tbody tr:last-child td { border-bottom: none; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td code { background: none; border: none; padding: 0; }
+
+/* ── Endpoint list ──────────────────────── */
+.api { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--hair); border-radius: 4px; overflow: hidden; }
+.api-row {
+  display: grid;
+  grid-template-columns: 62px minmax(180px, 1fr) minmax(0, 1.5fr);
+  gap: 12px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--hair);
+  align-items: baseline;
+  font-size: 14px;
+}
+.api-row:last-child { border-bottom: none; }
+.api-row:nth-child(odd) { background: var(--surface); }
+.verb { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; color: var(--gold); font-weight: 500; }
+.path { font-family: var(--mono); font-size: 13px; word-break: break-all; }
+.what { color: var(--muted); font-size: 13.5px; }
+
+/* ── Build order ────────────────────────── */
+.steps { display: flex; flex-direction: column; gap: 2px; counter-reset: step; max-width: var(--measure); }
+.step {
+  display: grid; grid-template-columns: 34px 1fr; gap: 14px;
+  padding: 13px 0; border-bottom: 1px solid var(--hair); align-items: baseline;
+}
+.step:last-child { border-bottom: none; }
+.step::before {
+  counter-increment: step; content: counter(step);
+  font-family: var(--mono); font-size: 12px; color: var(--gold);
+  padding-top: 2px;
+}
+.step-body { display: flex; flex-direction: column; gap: 3px; }
+.step-body span { color: var(--muted); font-size: 14px; }
+
+footer {
+  border-top: 1px solid var(--hair);
+  padding-top: 20px;
+  color: var(--muted);
+  font-size: 13.5px;
+  max-width: var(--measure);
+  display: flex; flex-direction: column; gap: 8px;
+}
+
+@media (max-width: 620px) {
+  body { font-size: 16px; }
+  .page { padding-block: 36px 64px; gap: 36px; }
+  .api-row { grid-template-columns: 1fr; gap: 3px; }
+  .step { grid-template-columns: 26px 1fr; gap: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <div class="eyebrow">System design · v1 · September 2026</div>
+    <h1>RagGita Backend Design</h1>
+    <p class="standfirst">
+      Turning a stateless single-container chat endpoint into a multi-user backend with
+      per-user history, conversation memory, and the compliance an Indian mental-health
+      app needs before it reaches the Play Store.
+    </p>
+    <div class="decisions">
+      <span class="chip">auth · <b>Firebase</b></span>
+      <span class="chip">memory · <b>window + summary</b></span>
+      <span class="chip">scale · <b>~200 users</b></span>
+      <span class="chip">retention · <b>user-deletable</b></span>
+      <span class="chip">store · <b>DynamoDB</b></span>
+    </div>
+  </header>
+
+  <section>
+    <h2>What actually changes</h2>
+    <p>
+      The Lambda you have today answers each message in isolation. It does not know who is
+      asking, and nothing survives the request. Three things have to be added, and only three:
+      <strong>identity</strong>, <strong>storage</strong>, and <strong>memory</strong>. Everything else
+      already works — the RAG retrieval, the class router, the crisis guard, the voice endpoints.
+    </p>
+    <div class="note done">
+      <span class="lbl">Already built</span>
+      <p>
+        The crisis guard, the seven-class dynamic prompting, the 60–90 word reply discipline
+        and the Web Adapter deployment all carry forward unchanged. This design adds a layer
+        around them rather than replacing them.
+      </p>
+    </div>
+    <p>
+      Deliberately not changing: the Function URL stays the entry point, the FastAPI app stays
+      one Lambda, and there is no second service. At a few hundred users, splitting this into
+      microservices would add failure modes and buy nothing.
+    </p>
+  </section>
+
+  <section>
+    <h2>The path a message takes</h2>
+
+    <figure>
+      <div class="figbox">
+        <svg viewBox="0 0 900 400" role="img" aria-label="A message travels from the Android app to the Lambda, which verifies the Firebase token, reads recent memory from DynamoDB, runs the crisis check, then calls the model and writes both messages back. A crisis message skips the model entirely.">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+            <marker id="arg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#9c6f1f"/>
+            </marker>
+          </defs>
+
+          <!-- Lambda container -->
+          <rect x="150" y="98" width="620" height="180" rx="4" fill="none" stroke="currentColor" stroke-opacity="0.32" stroke-dasharray="5 4"/>
+          <text x="160" y="118" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor" fill-opacity="0.6">LAMBDA · FastAPI + Web Adapter</text>
+
+          <!-- Client -->
+          <rect x="16" y="152" width="112" height="72" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.6"/>
+          <text x="72" y="182" text-anchor="middle" font-size="12.5" fill="currentColor">Android app</text>
+          <text x="72" y="200" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity="0.6">Firebase ID token</text>
+
+          <!-- Steps -->
+          <rect x="166" y="158" width="136" height="60" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.6"/>
+          <text x="234" y="184" text-anchor="middle" font-size="12.5" fill="currentColor">verify token</text>
+          <text x="234" y="201" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity="0.6">→ uid</text>
+
+          <rect x="318" y="158" width="136" height="60" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.6"/>
+          <text x="386" y="184" text-anchor="middle" font-size="12.5" fill="currentColor">load memory</text>
+          <text x="386" y="201" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity="0.6">summary + last 8</text>
+
+          <rect x="470" y="158" width="136" height="60" rx="3" fill="none" stroke="#9c6f1f" stroke-opacity="0.85"/>
+          <text x="538" y="184" text-anchor="middle" font-size="12.5" fill="currentColor">crisis check</text>
+          <text x="538" y="201" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity="0.6">regex, no model</text>
+
+          <rect x="622" y="158" width="136" height="60" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.6"/>
+          <text x="690" y="184" text-anchor="middle" font-size="12.5" fill="currentColor">answer</text>
+          <text x="690" y="201" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity="0.6">RAG + prompt</text>
+
+          <!-- External: OpenAI -->
+          <rect x="622" y="22" width="136" height="48" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.6"/>
+          <text x="690" y="43" text-anchor="middle" font-size="12.5" fill="currentColor">OpenAI</text>
+          <text x="690" y="59" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity="0.6">gpt-4o-mini</text>
+
+          <!-- External: DynamoDB -->
+          <rect x="318" y="322" width="440" height="50" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.6"/>
+          <text x="538" y="343" text-anchor="middle" font-size="12.5" fill="currentColor">DynamoDB — one table</text>
+          <text x="538" y="359" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity="0.6">conversations · messages · summaries · counters</text>
+
+          <!-- Arrows -->
+          <line x1="128" y1="188" x2="160" y2="188" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar)"/>
+          <text x="144" y="176" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" fill="currentColor" fill-opacity="0.65">POST</text>
+
+          <line x1="302" y1="188" x2="312" y2="188" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar)"/>
+          <line x1="454" y1="188" x2="464" y2="188" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar)"/>
+          <line x1="606" y1="188" x2="616" y2="188" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar)"/>
+
+          <line x1="386" y1="218" x2="386" y2="316" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar)"/>
+          <text x="396" y="270" font-size="10.5" fill="currentColor" fill-opacity="0.65">read</text>
+
+          <line x1="700" y1="218" x2="700" y2="316" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar)"/>
+          <text x="710" y="270" font-size="10.5" fill="currentColor" fill-opacity="0.65">write both messages</text>
+
+          <line x1="690" y1="158" x2="690" y2="76" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar)"/>
+          <text x="700" y="118" font-size="10.5" fill="currentColor" fill-opacity="0.65">one call</text>
+
+          <!-- Response out -->
+          <line x1="770" y1="188" x2="862" y2="188" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar)"/>
+          <text x="816" y="176" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" fill="currentColor" fill-opacity="0.65">reply</text>
+
+          <!-- Crisis short-circuit -->
+          <polyline points="538,218 538,262 838,262 838,196" fill="none" stroke="#9c6f1f" stroke-width="1.6" marker-end="url(#arg)"/>
+          <text x="688" y="278" text-anchor="middle" font-size="10.5" fill="#9c6f1f">crisis → helpline reply, no model call, no cost</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>One message, one Lambda invocation.</b> The crisis check sits before the model call, so a
+        message about self-harm never reaches OpenAI and never costs anything — the same property
+        that lets it bypass rate limiting.
+      </figcaption>
+    </figure>
+
+    <p>
+      The order matters. Token verification first, because everything downstream is keyed on
+      <code>uid</code>. Crisis check before the model, because that reply is fixed text and
+      must work even when quota is exhausted or OpenAI is down.
+    </p>
+  </section>
+
+  <section>
+    <h2>Identity without an API Gateway</h2>
+    <p>
+      The Android app signs in through Firebase (Google or phone OTP) and gets an ID token — a
+      short-lived RS256 JWT that the SDK refreshes on its own. Every request carries it as
+      <code>Authorization: Bearer &lt;token&gt;</code>.
+    </p>
+    <p>
+      Lambda verifies it in-process: fetch Google's public signing keys once per cold start, cache
+      them, check signature, expiry, issuer and audience against your Firebase project id. The
+      <code>sub</code> claim becomes your <code>uid</code>. No network call per request.
+    </p>
+
+    <div class="note">
+      <span class="lbl">Why not API Gateway</span>
+      <p>
+        API Gateway with a Cognito or Lambda authorizer is the textbook answer, and it is the wrong
+        one here. It adds per-request cost, a second place for CORS and timeouts to be wrong, and a
+        streaming configuration you already fought once. Verifying a JWT is about forty lines.
+        Revisit this if you ever need usage plans, API keys for partners, or WAF.
+      </p>
+    </div>
+
+    <div class="api">
+      <div class="api-row"><span class="verb">POST</span><span class="path">/chat</span><span class="what">Send a message. Returns the reply and the class used.</span></div>
+      <div class="api-row"><span class="verb">GET</span><span class="path">/conversations</span><span class="what">The signed-in user's chats, newest first.</span></div>
+      <div class="api-row"><span class="verb">GET</span><span class="path">/conversations/{id}</span><span class="what">Messages in one chat, paged.</span></div>
+      <div class="api-row"><span class="verb">DELETE</span><span class="path">/conversations/{id}</span><span class="what">Delete one chat and its messages.</span></div>
+      <div class="api-row"><span class="verb">DELETE</span><span class="path">/me</span><span class="what">Erase everything for this user. Required by law, not a nice-to-have.</span></div>
+      <div class="api-row"><span class="verb">POST</span><span class="path">/tts</span><span class="what">Speech for a reply. Unchanged.</span></div>
+      <div class="api-row"><span class="verb">GET</span><span class="path">/classes</span><span class="what">Class chips for the UI. Unchanged, no auth.</span></div>
+      <div class="api-row"><span class="verb">GET</span><span class="path">/health</span><span class="what">Liveness. Also what the app pings on launch to warm the container.</span></div>
+    </div>
+
+    <div class="note">
+      <span class="lbl">Cold start trick</span>
+      <p>
+        Fire <code>GET /health</code> the moment the app opens, before the user types anything.
+        By the time they have written a sentence, the container is warm and the first reply feels
+        instant instead of taking eight seconds. It costs one cheap invocation.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>One table, two access patterns</h2>
+    <p>
+      Everything the app reads falls into two questions: <em>what chats does this user have</em>, and
+      <em>what was said in this chat</em>. A single DynamoDB table answers both with one query each,
+      which is the whole reason to shape the keys this way rather than reach for Postgres.
+    </p>
+
+    <figure>
+      <div class="figbox">
+        <svg viewBox="0 0 880 320" role="img" aria-label="A single DynamoDB table with three item shapes. Profile and conversation items are partitioned by user id so one query lists a user's chats. Message items are partitioned by conversation id so one query reads a chat's history in timestamp order.">
+          <defs>
+            <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#9c6f1f"/>
+            </marker>
+          </defs>
+
+          <!-- header -->
+          <text x="196" y="40" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor" fill-opacity="0.6">PARTITION KEY</text>
+          <text x="430" y="40" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor" fill-opacity="0.6">SORT KEY</text>
+          <text x="646" y="40" font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor" fill-opacity="0.6">ATTRIBUTES</text>
+          <line x1="190" y1="52" x2="866" y2="52" stroke="currentColor" stroke-opacity="0.35"/>
+
+          <!-- row 1 -->
+          <text x="196" y="82" font-family="IBM Plex Mono, monospace" font-size="12.5" fill="currentColor">USER#&lt;uid&gt;</text>
+          <text x="430" y="82" font-family="IBM Plex Mono, monospace" font-size="12.5" fill="currentColor">PROFILE</text>
+          <text x="646" y="82" font-size="12" fill="currentColor" fill-opacity="0.75">longTermSummary, createdAt</text>
+          <line x1="190" y1="98" x2="866" y2="98" stroke="currentColor" stroke-opacity="0.16"/>
+
+          <!-- row 2 -->
+          <text x="196" y="128" font-family="IBM Plex Mono, monospace" font-size="12.5" fill="currentColor">USER#&lt;uid&gt;</text>
+          <text x="430" y="128" font-family="IBM Plex Mono, monospace" font-size="12.5" fill="currentColor">CONV#&lt;convId&gt;</text>
+          <text x="646" y="128" font-size="12" fill="currentColor" fill-opacity="0.75">title, lastMessageAt, summary</text>
+          <line x1="190" y1="144" x2="866" y2="144" stroke="currentColor" stroke-opacity="0.16"/>
+
+          <!-- row 3 -->
+          <text x="196" y="174" font-family="IBM Plex Mono, monospace" font-size="12.5" fill="currentColor">CONV#&lt;convId&gt;</text>
+          <text x="430" y="174" font-family="IBM Plex Mono, monospace" font-size="12.5" fill="currentColor">TS#&lt;iso8601&gt;</text>
+          <text x="646" y="174" font-size="12" fill="currentColor" fill-opacity="0.75">role, text, userClass, crisis</text>
+          <line x1="190" y1="190" x2="866" y2="190" stroke="currentColor" stroke-opacity="0.16"/>
+
+          <!-- row 4 -->
+          <text x="196" y="220" font-family="IBM Plex Mono, monospace" font-size="12.5" fill="currentColor">USER#&lt;uid&gt;</text>
+          <text x="430" y="220" font-family="IBM Plex Mono, monospace" font-size="12.5" fill="currentColor">QUOTA#&lt;yyyy-mm-dd&gt;</text>
+          <text x="646" y="220" font-size="12" fill="currentColor" fill-opacity="0.75">count, ttl</text>
+
+          <!-- query brackets -->
+          <path d="M 176 66 L 166 66 L 166 138 L 176 138" fill="none" stroke="#9c6f1f" stroke-width="1.4"/>
+          <line x1="166" y1="102" x2="150" y2="102" stroke="#9c6f1f" stroke-width="1.4" marker-end="url(#ar2)"/>
+          <text x="140" y="94" text-anchor="end" font-size="11.5" fill="#9c6f1f">list a user's chats</text>
+          <text x="140" y="110" text-anchor="end" font-size="10.5" fill="currentColor" fill-opacity="0.6">one query</text>
+
+          <path d="M 176 158 L 166 158 L 166 186 L 176 186" fill="none" stroke="#9c6f1f" stroke-width="1.4"/>
+          <line x1="166" y1="172" x2="150" y2="172" stroke="#9c6f1f" stroke-width="1.4" marker-end="url(#ar2)"/>
+          <text x="140" y="168" text-anchor="end" font-size="11.5" fill="#9c6f1f">read one chat</text>
+          <text x="140" y="184" text-anchor="end" font-size="10.5" fill="currentColor" fill-opacity="0.6">sorted by time</text>
+
+          <text x="196" y="270" font-size="11.5" fill="currentColor" fill-opacity="0.65">Messages hang off the conversation, not the user — so a chat with 400 messages</text>
+          <text x="196" y="288" font-size="11.5" fill="currentColor" fill-opacity="0.65">never slows down the screen that lists chats.</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Why the keys split across two partitions.</b> If messages lived under <code>USER#</code>
+        too, listing chats would have to scan past every message ever sent. Splitting them keeps
+        both screens fast no matter how long someone has been using the app.
+      </figcaption>
+    </figure>
+
+    <p>
+      Turn on <strong>point-in-time recovery</strong> and leave the table on <strong>on-demand</strong>
+      capacity. At this scale you will never think about throughput again, and you pay for what you use.
+      The <code>ttl</code> attribute on quota rows lets DynamoDB expire yesterday's counters for free.
+    </p>
+  </section>
+
+  <section>
+    <h2>Memory that does not grow without bound</h2>
+    <p>
+      You chose recent messages plus a long-term summary. The reason that combination matters is
+      cost: a naive "send the whole history" approach makes every message more expensive than the
+      last, and a long conversation eventually costs more than the user is worth.
+    </p>
+
+    <figure>
+      <div class="figbox">
+        <svg viewBox="0 0 880 300" role="img" aria-label="A conversation of many turns. Older turns are compressed into a rolling summary while only the last eight turns are sent verbatim, so the prompt stays roughly the same size however long the conversation runs.">
+          <defs>
+            <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <!-- older turns -->
+          <g fill="none" stroke="currentColor" stroke-opacity="0.42">
+            <rect x="40"  y="74" width="18" height="42" rx="2"/>
+            <rect x="66"  y="74" width="18" height="42" rx="2"/>
+            <rect x="92"  y="74" width="18" height="42" rx="2"/>
+            <rect x="118" y="74" width="18" height="42" rx="2"/>
+            <rect x="144" y="74" width="18" height="42" rx="2"/>
+            <rect x="170" y="74" width="18" height="42" rx="2"/>
+            <rect x="196" y="74" width="18" height="42" rx="2"/>
+            <rect x="222" y="74" width="18" height="42" rx="2"/>
+            <rect x="248" y="74" width="18" height="42" rx="2"/>
+            <rect x="274" y="74" width="18" height="42" rx="2"/>
+            <rect x="300" y="74" width="18" height="42" rx="2"/>
+            <rect x="326" y="74" width="18" height="42" rx="2"/>
+            <rect x="352" y="74" width="18" height="42" rx="2"/>
+            <rect x="378" y="74" width="18" height="42" rx="2"/>
+            <rect x="404" y="74" width="18" height="42" rx="2"/>
+            <rect x="430" y="74" width="18" height="42" rx="2"/>
+          </g>
+
+          <!-- recent turns, highlighted -->
+          <g fill="none" stroke="#9c6f1f" stroke-width="1.6">
+            <rect x="470" y="74" width="18" height="42" rx="2"/>
+            <rect x="496" y="74" width="18" height="42" rx="2"/>
+            <rect x="522" y="74" width="18" height="42" rx="2"/>
+            <rect x="548" y="74" width="18" height="42" rx="2"/>
+            <rect x="574" y="74" width="18" height="42" rx="2"/>
+            <rect x="600" y="74" width="18" height="42" rx="2"/>
+            <rect x="626" y="74" width="18" height="42" rx="2"/>
+            <rect x="652" y="74" width="18" height="42" rx="2"/>
+          </g>
+
+          <!-- brackets -->
+          <path d="M 40 62 L 40 52 L 448 52 L 448 62" fill="none" stroke="currentColor" stroke-opacity="0.45"/>
+          <text x="244" y="42" text-anchor="middle" font-size="11.5" fill="currentColor" fill-opacity="0.7">older turns — compressed</text>
+
+          <path d="M 470 62 L 470 52 L 670 52 L 670 62" fill="none" stroke="#9c6f1f"/>
+          <text x="570" y="42" text-anchor="middle" font-size="11.5" fill="#9c6f1f">last 8 turns — sent word for word</text>
+
+          <text x="700" y="100" font-size="12" fill="currentColor" fill-opacity="0.6">new message →</text>
+
+          <!-- summariser -->
+          <line x1="244" y1="116" x2="244" y2="156" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar3)"/>
+          <rect x="130" y="160" width="228" height="46" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.6"/>
+          <text x="244" y="180" text-anchor="middle" font-size="12.5" fill="currentColor">summariser</text>
+          <text x="244" y="196" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity="0.6">runs every 10 turns, not every turn</text>
+
+          <line x1="358" y1="183" x2="404" y2="183" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar3)"/>
+          <rect x="410" y="160" width="190" height="46" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.6"/>
+          <text x="505" y="180" text-anchor="middle" font-size="12.5" fill="currentColor">rolling summary</text>
+          <text x="505" y="196" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity="0.6">≈200 tokens, stored on the chat</text>
+
+          <!-- prompt -->
+          <line x1="600" y1="183" x2="646" y2="183" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar3)"/>
+          <rect x="652" y="150" width="196" height="66" rx="3" fill="none" stroke="#9c6f1f" stroke-width="1.5"/>
+          <text x="750" y="174" text-anchor="middle" font-size="12.5" fill="currentColor">prompt sent to model</text>
+          <text x="750" y="192" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity="0.65">summary + 8 turns + verses</text>
+          <text x="750" y="207" text-anchor="middle" font-size="10.5" fill="#9c6f1f">bounded, turn 9 or turn 900</text>
+
+          <line x1="670" y1="118" x2="720" y2="144" stroke="#9c6f1f" stroke-width="1.3" marker-end="url(#ar3)"/>
+
+          <text x="40" y="256" font-size="11.5" fill="currentColor" fill-opacity="0.65">Without this, turn 50 of a conversation costs roughly six times what turn 5 did —</text>
+          <text x="40" y="274" font-size="11.5" fill="currentColor" fill-opacity="0.65">and the model starts losing the thread in the middle of a long context anyway.</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Prompt size stays flat.</b> The summariser is a second, cheaper model call that fires once
+        every ten turns — roughly a 10% overhead that removes an unbounded one.
+      </figcaption>
+    </figure>
+
+    <p>
+      The per-user <code>longTermSummary</code> on the profile row is the slower loop: a few lines
+      about what this person keeps returning to, refreshed rarely. It is what makes the app feel
+      like it knows them across weeks rather than within one session.
+    </p>
+
+    <div class="note risk">
+      <span class="lbl">Write this one carefully</span>
+      <p>
+        The summariser prompt decides what gets remembered about someone's worst nights. Tell it to
+        record <em>situations and what helped</em>, and explicitly not to record diagnoses,
+        self-harm details, or anything it inferred rather than heard. A summary is the one artefact
+        that outlives the conversation, so it is the one most worth getting wrong slowly.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Per-user limits, because the current ones do not work here</h2>
+    <p>
+      The rate limiter you shipped counts requests in process memory. On Lambda each concurrent
+      container has its own counter, so the real limit is your setting multiplied by however many
+      containers happen to be warm. It was always a backstop; with identity you can do it properly.
+    </p>
+    <p>
+      Use a DynamoDB atomic counter: one row per user per day, <code>UpdateItem</code> with
+      <code>ADD count 1</code> and a condition that rejects the write past the cap. It is a single
+      round trip, it is correct across every container, and the <code>ttl</code> attribute deletes
+      yesterday's rows without a cleanup job.
+    </p>
+    <p>
+      Keep the limit generous — someone having a hard night may send thirty messages, and that is
+      not abuse. The cap exists to stop a runaway client or a scripted attack, not to ration comfort.
+      And as it does today, <strong>the crisis path skips the check entirely</strong>.
+    </p>
+  </section>
+
+  <section>
+    <h2>Crisis handling, with real users</h2>
+    <p>
+      Right now the guard returns a helpline and that is the whole system. With accounts, history and
+      a Play Store listing, you will be tempted to build more: alerts, escalation, a dashboard of
+      at-risk users. Think hard before you do.
+    </p>
+    <div class="note risk">
+      <span class="lbl">The honest constraint</span>
+      <p>
+        An app that implies someone is watching, when nobody is, is more dangerous than one that
+        plainly is not. If you cannot staff a human response within minutes, every hour of the night,
+        do not build anything that suggests you can. Surface the helpline well and be clear about
+        what the app is.
+      </p>
+    </div>
+    <ul>
+      <li>Put <strong>Tele-MANAS 14416</strong> in the app's permanent chrome — a corner of the screen, not only inside a reply someone has to earn.</li>
+      <li>Log crisis <em>events</em> (uid, timestamp, that it fired) and never the message text. You want to know the guard works; you do not want a database of people's worst moments.</li>
+      <li>Consider not persisting crisis messages at all. The user loses nothing; you lose a liability.</li>
+      <li>Tune the guard with real misses, not imagination. Its failure mode should stay "too many false positives".</li>
+    </ul>
+    <p>
+      There is also an age problem worth naming now. A free Indian mental-health app will be used by
+      people under eighteen, and DPDP requires verifiable parental consent for children's data.
+      There is no clean answer — decide deliberately rather than discovering it during review.
+    </p>
+  </section>
+
+  <section>
+    <h2>What the law actually asks for</h2>
+    <p>
+      Two regimes apply, and both have real dates. Chat logs from a mental-health app are about the
+      most sensitive category of personal data you can hold, so this is not paperwork to do at the end.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>What</th><th>When</th><th>What it means for you</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>DPDP soft enforcement ends</td><td class="num">Nov 2026</td><td>Consent notice, deletion flow and a named grievance officer should be live before this.</td></tr>
+          <tr><td>DPDP full enforcement</td><td class="num">May 2027</td><td>Penalties become enforceable — up to ₹250 crore at the top end.</td></tr>
+          <tr><td>Play health declaration</td><td class="num">At submission</td><td>Complete the Health apps declaration form on the App content page.</td></tr>
+          <tr><td>Medical device disclaimer</td><td class="num">At submission</td><td>Store listing must say the app is not a medical device and does not diagnose or treat.</td></tr>
+          <tr><td>Privacy policy URL</td><td class="num">At submission</td><td>Must match across Play Console, inside the app, and your website.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <ul>
+      <li><strong>Consent notice</strong> in plain language, English plus at least Hindi — tell people their conversations are stored and why.</li>
+      <li><strong>Deletion that really deletes.</strong> <code>DELETE /me</code> must remove messages, summaries and the profile row, not just hide them.</li>
+      <li><strong>Grievance officer</strong> — a real, publicly reachable contact. For a solo developer that is you, with an email that is monitored.</li>
+      <li><strong>Never log message bodies to CloudWatch.</strong> Logs are the easiest place for sensitive text to leak into a system nobody audits.</li>
+      <li><strong>Encryption</strong> is on by default in DynamoDB and in transit. Leave it on and say so in the policy.</li>
+    </ul>
+
+    <p>
+      You are almost certainly not a Significant Data Fiduciary at this size — that threshold sits
+      around five million users — so the audit obligations do not apply yet.
+    </p>
+  </section>
+
+  <section>
+    <h2>What this costs at 200 users</h2>
+    <p>
+      Assume 200 registered, 60 active on a given day, 10 messages each: about
+      <strong>18,000 messages a month</strong>.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Component</th><th>Volume</th><th>Monthly</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Lambda</td><td class="num">18k × 3s × 2GB</td><td class="num">≈ $2</td></tr>
+          <tr><td>DynamoDB (on-demand)</td><td class="num">36k writes, 18k queries</td><td class="num">under $1</td></tr>
+          <tr><td>Firebase Auth</td><td class="num">200 users</td><td class="num">free</td></tr>
+          <tr><td>OpenAI — chat</td><td class="num">≈45M in / 2.7M out tokens</td><td class="num">dominant</td></tr>
+          <tr><td>OpenAI — TTS</td><td class="num">depends on voice use</td><td class="num">can exceed chat</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      I could not load OpenAI's pricing page while writing this, so multiply those token volumes by
+      current <code>gpt-4o-mini</code> rates yourself rather than trusting a number from me — it
+      lands somewhere around ten dollars a month at the rates I last knew. AWS is noise. Your bill is
+      almost entirely the model, and <strong>voice can quietly become the biggest line</strong>,
+      because speech is charged by character and people use it more than you expect.
+    </p>
+    <p>
+      Your AWS free credits cover the infrastructure comfortably. Set a hard spend cap on the OpenAI
+      account regardless — it is the only control that cannot be bypassed by a bug in your own code.
+    </p>
+  </section>
+
+  <section>
+    <h2>What I would not build</h2>
+    <p>
+      Each of these is the standard answer to a problem you do not have. Skipping them is the design
+      decision, not an omission.
+    </p>
+    <ul>
+      <li><strong>API Gateway</strong> — the Function URL already streams and already works.</li>
+      <li><strong>A VPC</strong> — adds cold-start latency and NAT cost; DynamoDB and OpenAI are both reached over the public internet anyway.</li>
+      <li><strong>Redis or any cache</strong> — DynamoDB answers in single-digit milliseconds and you have no read hotspot.</li>
+      <li><strong>SQS or async workers</strong> — a chat reply is synchronous by nature; the user is waiting.</li>
+      <li><strong>Postgres or RDS</strong> — an always-on instance under a serverless app, for access patterns a key-value store already fits.</li>
+      <li><strong>WebSockets</strong> — SSE over the Function URL covers streaming replies.</li>
+      <li><strong>Multiple Lambdas per endpoint</strong> — one FastAPI app is easier to reason about and shares one warm container.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Build order</h2>
+    <p>
+      Sequenced so that each step ships something usable and nothing is blocked on the step after it.
+    </p>
+    <div class="steps">
+      <div class="step"><div class="step-body"><strong>DynamoDB table and message persistence</strong><span>No auth yet — use a device-generated id. Proves the schema before identity complicates it.</span></div></div>
+      <div class="step"><div class="step-body"><strong>Firebase verification in Lambda</strong><span>Swap the device id for a real <code>uid</code>. Add a migration path for anyone who used the app before signing in.</span></div></div>
+      <div class="step"><div class="step-body"><strong>Recent-message window</strong><span>Last 8 turns into the prompt. This alone makes the app feel like a conversation.</span></div></div>
+      <div class="step"><div class="step-body"><strong>Rolling summary</strong><span>Add the summariser once you have real long conversations to test it against.</span></div></div>
+      <div class="step"><div class="step-body"><strong>Per-user quota on DynamoDB</strong><span>Replace the in-memory limiter. Keep the crisis bypass.</span></div></div>
+      <div class="step"><div class="step-body"><strong>Deletion endpoints</strong><span><code>DELETE /conversations/{id}</code> and <code>DELETE /me</code>, wired to real buttons in the app.</span></div></div>
+      <div class="step"><div class="step-body"><strong>Compliance before submission</strong><span>Privacy policy, consent notice, health declaration, disclaimer, grievance contact. Play review will check.</span></div></div>
+      <div class="step"><div class="step-body"><strong>Raise the Lambda concurrency quota</strong><span>Your account is capped at 10 today. Fine for now; ask early, approval is not instant.</span></div></div>
+    </div>
+  </section>
+
+  <footer>
+    <p>
+      Open questions worth settling before step 2: whether anonymous users can talk before signing in,
+      and what happens to their history when they later create an account.
+    </p>
+    <p>
+      Written against the RagGita Lambda deployment in <code>ap-south-1</code>, September 2026.
+    </p>
+  </footer>
+
+</div>

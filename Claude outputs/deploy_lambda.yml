@@ -57,11 +57,21 @@ jobs:
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
-          IMAGE="$REGISTRY/$ECR_REPO:latest"
-          docker build -t "$IMAGE" .
-          docker push "$IMAGE"
-          echo "IMAGE_URI=$IMAGE" >> "$GITHUB_ENV"
-          echo "Pushed: $IMAGE"
+          # SHA se tag karna zaroori hai. Sirf :latest use karne pe
+          # update-function-code ko har baar bilkul wahi URI milti hai, aur
+          # Lambda purana digest pakde rehta hai — code push hone ke baad bhi
+          # purana image chalta rehta hai. SHA tag se woh possible hi nahi.
+          SHA_TAG="$REGISTRY/$ECR_REPO:${GITHUB_SHA::12}"
+          LATEST="$REGISTRY/$ECR_REPO:latest"
+
+          docker build --platform linux/amd64 -t "$SHA_TAG" -t "$LATEST" .
+          echo "--- image architecture ---"
+          docker image inspect "$SHA_TAG" --format '{{.Os}}/{{.Architecture}}'
+          docker push "$SHA_TAG"
+          docker push "$LATEST"
+
+          echo "IMAGE_URI=$SHA_TAG" >> "$GITHUB_ENV"
+          echo "Pushed: $SHA_TAG"
 
       - name: Update Lambda function (agar pehle se bani hai)
         run: |
