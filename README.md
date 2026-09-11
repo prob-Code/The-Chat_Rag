@@ -1,11 +1,4 @@
----
-title: RagGita
-emoji: 🕉️
-colorFrom: purple
-colorTo: indigo
-sdk: docker
-app_port: 8000
----
+
 
 <div align="center">
 
