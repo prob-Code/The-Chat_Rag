@@ -2,10 +2,11 @@
 RagGita FastAPI Server
 A compassionate spiritual guide API based on Bhagavad Gita wisdom.
 
-v2 changes:
-  - Short, gentle replies (see rag_core/prompts.py)
-  - Dynamic prompting per user class (see rag_core/gita_map.py)
+v2.1:
+  - Short, gentle replies (rag_core/prompts.py)
+  - Dynamic prompting per user class (rag_core/gita_map.py)
   - Crisis safety guard before any LLM call
+  - Abuse guard: per-IP rate limit + daily budget (rag_core/guard.py)
   - GET  /classes  -> UI ke liye class list
   - POST /tts      -> OpenAI text-to-speech (voice replies)
 """
@@ -40,6 +41,7 @@ from rag_core.config import LightRAGConfig, get_llm
 from rag_core.streaming import TokenQueueCallbackHandler
 from rag_core.prompts import build_prompt, get_prompt_template, is_crisis, CRISIS_REPLY
 from rag_core.gita_map import public_classes
+from rag_core.guard import enforce as guard_enforce
 
 import requests
 
@@ -58,11 +60,20 @@ llm = None
 prompt_template = None
 
 
-def _llm_ping() -> bool:
-    """Quickly check whether the configured OpenAI-compatible LLM endpoint is reachable.
+# Jab OpenAI khud 429 de — yeh alag baat hai humare rate limit se.
+BUSY_MESSAGE = (
+    "A lot of people are here right now and I couldn't get through. "
+    "Give it a few seconds and try again — I'm not going anywhere."
+)
 
-    Returns True if reachable (or no external base configured), False otherwise.
-    """
+
+def _is_upstream_rate_limit(e: Exception) -> bool:
+    s = str(e).lower()
+    return "429" in s or "rate limit" in s or "rate_limit" in s or "overloaded" in s
+
+
+def _llm_ping() -> bool:
+    """Quickly check whether the configured OpenAI-compatible LLM endpoint is reachable."""
     base = os.getenv("OPENAI_API_BASE", "").strip()
     if not base:
         return True
@@ -80,7 +91,6 @@ def _llm_ping() -> bool:
 
 
 def _clamp_top_k(k: int) -> int:
-    # For fast TTFT, keep context small.
     return max(1, min(5, int(k)))
 
 
@@ -100,7 +110,6 @@ def _cached_query_embedding(query: str) -> tuple:
 
 
 def _retrieve_docs_faiss(question: str, k: int):
-    """Retrieve top-k docs from FAISS using cached query embeddings."""
     if db is None:
         raise RuntimeError("Vector DB not loaded")
     k = _clamp_top_k(k)
@@ -113,7 +122,6 @@ def _docs_to_context(docs) -> str:
 
 
 def _sse(event, data) -> bytes:
-    """Encode a Server-Sent Event payload."""
     payload = json.dumps(data, ensure_ascii=False)
     if event:
         return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
@@ -128,7 +136,6 @@ async def lifespan(app: FastAPI):
     logger.info("Loading RagGita models...")
 
     try:
-        # 1. Load embeddings
         logger.info("Loading embeddings model...")
         use_remote = os.getenv("USE_REMOTE_EMBEDDINGS", "true").strip().lower() in ("1", "true", "yes", "y")
         hf_token = os.getenv("HF_TOKEN", os.getenv("HUGGINGFACE_HUB_TOKEN", "")).strip()
@@ -145,7 +152,6 @@ async def lifespan(app: FastAPI):
                 model_name="sentence-transformers/all-MiniLM-L6-v2"
             )
 
-        # 2. Load vector DB
         logger.info("Loading FAISS vector database...")
         db = FAISS.load_local(
             "gita_vector_db",
@@ -154,12 +160,10 @@ async def lifespan(app: FastAPI):
         )
         retriever = db.as_retriever(search_kwargs={"k": 4})
 
-        # 3. Initialize LLM
         logger.info("Initializing LLM...")
         config = LightRAGConfig()
         llm = get_llm(config)
 
-        # 4. Default prompt (streaming endpoint uses this; /chat builds per-request)
         prompt_template = get_prompt_template("auto")
 
         logger.info("RagGita API is ready!")
@@ -173,24 +177,26 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down RagGita API...")
 
 
-# Create FastAPI app
 app = FastAPI(
     title="RagGita API",
     description="A compassionate spiritual guide API based on Bhagavad Gita wisdom",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan
 )
 
-# Enable CORS
+# CORS — production me ALLOWED_ORIGINS set karo (comma-separated).
+# "*" sirf isliye default hai taaki local dev na toote.
+_origins_env = os.getenv("ALLOWED_ORIGINS", "*").strip()
+_allowed_origins = ["*"] if _origins_env == "*" else [o.strip() for o in _origins_env.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_allowed_origins,
+    allow_credentials=_allowed_origins != ["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
-# Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
@@ -199,46 +205,66 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # ======================
 
 class ChatRequest(BaseModel):
-    """Chat request model"""
-    question: str = Field(
-        ...,
-        min_length=1,
-        max_length=2000,
-        description="The user's question or message"
-    )
-    user_class: str = Field(
-        default="auto",
-        max_length=32,
-        description="Emotional context: low, anxious, grief, lonely, angry, lost, seeking, or auto"
-    )
+    question: str = Field(..., min_length=1, max_length=2000)
+    user_class: str = Field(default="auto", max_length=32)
 
     class Config:
         json_schema_extra = {
-            "example": {
-                "question": "I'm feeling anxious about my future.",
-                "user_class": "anxious"
-            }
+            "example": {"question": "I'm feeling anxious about my future.", "user_class": "anxious"}
         }
 
 
 class ChatResponse(BaseModel):
-    """Chat response model"""
-    answer: str = Field(..., description="The AI-generated response")
-    sources: list = Field(default=[], description="Source documents used")
-    user_class: str = Field(default="auto", description="Class actually used for this reply")
-    crisis: bool = Field(default=False, description="True if the safety guard handled this message")
+    answer: str
+    sources: list = Field(default=[])
+    user_class: str = Field(default="auto")
+    crisis: bool = Field(default=False)
 
 
 class TTSRequest(BaseModel):
-    """Text-to-speech request"""
     text: str = Field(..., min_length=1, max_length=4000)
 
 
 class HealthResponse(BaseModel):
-    """Health check response"""
     status: str
     message: str
-    version: str = "2.0.0"
+    version: str = "2.1.0"
+
+
+# ======================
+# Core logic
+# ======================
+
+def _generate(question: str, user_class: str, context: str) -> ChatResponse:
+    """Prompt banao, LLM chalao, response wapas do."""
+    prompt, resolved_class = build_prompt(question, user_class)
+    chain = prompt | llm
+    answer = chain.invoke({"context": context, "question": question})
+    return ChatResponse(answer=answer.content, sources=[], user_class=resolved_class)
+
+
+def _handle_llm_error(e: Exception):
+    """Exception ko sahi HTTP response me badlo."""
+    logger.exception("Generation failed")
+
+    if _is_upstream_rate_limit(e):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=BUSY_MESSAGE,
+            headers={"Retry-After": "10"},
+        )
+
+    err_str = str(e).lower()
+    if "connection error" in err_str or isinstance(e, requests.RequestException):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="LLM backend connection failed. Check OPENAI_API_BASE, network and API key.",
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="An internal error occurred while generating the response."
+    )
 
 
 # ======================
@@ -247,171 +273,87 @@ class HealthResponse(BaseModel):
 
 @app.get("/", include_in_schema=False)
 def root():
-    """Serve the HTML frontend"""
     return FileResponse("static/index.html")
 
 
 @app.get("/api", response_model=HealthResponse)
 def api_info():
-    """API info endpoint"""
-    return HealthResponse(
-        status="ok",
-        message="RagGita API is running. Visit /docs for API documentation.",
-        version="2.0.0"
-    )
+    return HealthResponse(status="ok", message="RagGita API is running. Visit /docs.", version="2.1.0")
 
 
 @app.get("/health", response_model=HealthResponse)
 def health_check():
-    """Health check endpoint for monitoring"""
-    global retriever
     if llm is None or retriever is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Models not loaded"
         )
-    return HealthResponse(
-        status="healthy",
-        message="All systems operational",
-        version="2.0.0"
-    )
+    return HealthResponse(status="healthy", message="All systems operational", version="2.1.0")
 
 
 @app.get("/classes")
 def list_classes():
-    """Available user classes, for the frontend selector."""
     return {"classes": public_classes(), "tts_enabled": _tts_enabled()}
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat_endpoint(request: ChatRequest):
-    """Chat with the Gita RAG bot.
-
-    Send a question (and optionally a user_class) and receive a short,
-    compassionate reply grounded in the Bhagavad Gita.
-    """
-    global llm, retriever
-
+def chat_endpoint(payload: ChatRequest, request: Request):
+    """Chat with the Gita RAG bot."""
     if llm is None or retriever is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Models are not loaded yet. Please try again in a moment."
         )
 
+    # ORDER MATTERS: crisis check sabse pehle.
+    # Yeh free hai (koi LLM call nahi), aur rate limit isse kabhi nahi rokta.
+    crisis = is_crisis(payload.question)
+    if crisis:
+        logger.info("Crisis guard triggered; returning helpline response.")
+        return ChatResponse(answer=CRISIS_REPLY, sources=[], user_class="crisis", crisis=True)
+
+    guard_enforce(request, is_crisis_message=False)
+
     try:
-        # Safety first — self-harm signal pe verse nahi, help chahiye
-        if is_crisis(request.question):
-            logger.info("Crisis guard triggered; returning helpline response.")
-            return ChatResponse(
-                answer=CRISIS_REPLY,
-                sources=[],
-                user_class="crisis",
-                crisis=True,
-            )
-
-        # Retrieve relevant context
-        docs = retriever.invoke(request.question)
+        docs = retriever.invoke(payload.question)
         context = _truncate_context("\n\n".join([d.page_content for d in docs]))
-
-        # Dynamic prompt for this person's class
-        prompt, resolved_class = build_prompt(request.question, request.user_class)
-        chain = prompt | llm
-
-        answer = chain.invoke({
-            "context": context,
-            "question": request.question
-        })
-
-        return ChatResponse(
-            answer=answer.content,
-            sources=[],
-            user_class=resolved_class,
-        )
-
+        return _generate(payload.question, payload.user_class, context)
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Error in chat endpoint")
-
-        err_str = str(e).lower()
-        if "connection error" in err_str or isinstance(e, requests.RequestException):
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=(
-                    "LLM backend connection failed. "
-                    "Check OPENAI_API_BASE, network connectivity, and API key."
-                ),
-            )
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An internal error occurred while generating the response."
-        )
+        _handle_llm_error(e)
 
 
 @app.post("/ask", response_model=ChatResponse)
-def ask_endpoint(request: ChatRequest):
+def ask_endpoint(payload: ChatRequest, request: Request):
     """Alias for /chat endpoint"""
-    return chat_endpoint(request)
+    return chat_endpoint(payload, request)
 
 
 @app.post("/chat_fast", response_model=ChatResponse)
-def chat_fast_endpoint(request: ChatRequest):
+def chat_fast_endpoint(payload: ChatRequest, request: Request):
     """Faster non-streaming endpoint (cached embeddings, fewer chunks)."""
-    global llm
-
     if llm is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Models are not loaded yet. Please try again in a moment."
         )
 
+    if is_crisis(payload.question):
+        logger.info("Crisis guard triggered; returning helpline response.")
+        return ChatResponse(answer=CRISIS_REPLY, sources=[], user_class="crisis", crisis=True)
+
+    guard_enforce(request, is_crisis_message=False)
+
     try:
-        if is_crisis(request.question):
-            logger.info("Crisis guard triggered; returning helpline response.")
-            return ChatResponse(
-                answer=CRISIS_REPLY,
-                sources=[],
-                user_class="crisis",
-                crisis=True,
-            )
-
         k = int(os.getenv("FAST_TOP_K", "3"))
-        docs = _retrieve_docs_faiss(request.question, k=k)
+        docs = _retrieve_docs_faiss(payload.question, k=k)
         context = _docs_to_context(docs)
-
-        prompt, resolved_class = build_prompt(request.question, request.user_class)
-        chain = prompt | llm
-
-        answer = chain.invoke({
-            "context": context,
-            "question": request.question
-        })
-
-        return ChatResponse(
-            answer=answer.content,
-            sources=[],
-            user_class=resolved_class,
-        )
-
+        return _generate(payload.question, payload.user_class, context)
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Error in chat_fast endpoint")
-        err_str = str(e).lower()
-        if "connection error" in err_str or isinstance(e, requests.RequestException):
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=(
-                    "LLM backend connection failed. "
-                    "Check OPENAI_API_BASE, network connectivity, and API key."
-                ),
-            )
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An internal error occurred while generating the response."
-        )
+        _handle_llm_error(e)
 
 
 @app.get("/chat/stream")
@@ -422,8 +364,6 @@ async def chat_stream_endpoint(
     user_class: str = "auto",
 ):
     """Stream tokens using Server-Sent Events (SSE)."""
-    global embedding_model, db
-
     if embedding_model is None or db is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -436,6 +376,8 @@ async def chat_stream_endpoint(
             yield _sse(None, {"token": CRISIS_REPLY})
             yield _sse("done", {"ok": True})
         return StreamingResponse(crisis_gen(), media_type="text/event-stream")
+
+    guard_enforce(request, is_crisis_message=False)
 
     k = _clamp_top_k(k)
 
@@ -452,13 +394,10 @@ async def chat_stream_endpoint(
         handler = TokenQueueCallbackHandler()
         config = LightRAGConfig()
         if config.use_bytez:
-            yield _sse(
-                "error",
-                {
-                    "message": "streaming_not_supported_for_bytez",
-                    "hint": "Set USE_BYTEZ=false to stream via an OpenAI-compatible backend."
-                },
-            )
+            yield _sse("error", {
+                "message": "streaming_not_supported_for_bytez",
+                "hint": "Set USE_BYTEZ=false to stream via an OpenAI-compatible backend."
+            })
             return
 
         stream_prompt, _resolved = build_prompt(question, user_class)
@@ -478,11 +417,9 @@ async def chat_stream_endpoint(
             async for token in handler.aiter_tokens(timeout_s=15.0):
                 if await request.is_disconnected():
                     break
-
                 if token is None:
                     yield b": ping\n\n"
                     continue
-
                 yield _sse(None, {"token": token})
         except Exception as e:
             yield _sse("error", {"message": f"generation_failed: {str(e)}"})
@@ -513,7 +450,6 @@ def _tts_enabled() -> bool:
     )
 
 
-# Yeh instructions gpt-4o-mini-tts ko tone batate hain.
 _TTS_INSTRUCTIONS = os.getenv(
     "TTS_INSTRUCTIONS",
     "Speak slowly and softly, like someone sitting beside a tired friend late at night. "
@@ -522,24 +458,25 @@ _TTS_INSTRUCTIONS = os.getenv(
 
 
 @app.post("/tts")
-def tts_endpoint(payload: TTSRequest):
-    """Convert a reply to speech. Returns audio/mpeg bytes.
-
-    Frontend isko try karta hai; fail hone pe browser ke apne speechSynthesis pe
-    gir jaata hai, so yeh optional hai.
-    """
+def tts_endpoint(payload: TTSRequest, request: Request):
+    """Convert a reply to speech. Returns audio/mpeg bytes."""
     if not _tts_enabled():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="TTS is disabled. Set ENABLE_TTS=true and OPENAI_API_KEY."
         )
 
+    # TTS pe bhi paisa lagta hai — guard yahan bhi chahiye.
+    guard_enforce(request, is_crisis_message=False)
+
     try:
         from openai import OpenAI
 
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        client = OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "3")),
+        )
 
-        # Markdown asterisks bolna weird lagta hai — saaf kar do
         clean = payload.text.replace("*", "").replace("#", "").replace("`", "")
 
         speech = client.audio.speech.create(
@@ -556,12 +493,17 @@ def tts_endpoint(payload: TTSRequest):
             headers={"Cache-Control": "no-store"},
         )
 
-    except Exception:
+    except HTTPException:
+        raise
+    except Exception as e:
         logger.exception("TTS failed")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Text-to-speech failed."
-        )
+        if _is_upstream_rate_limit(e):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=BUSY_MESSAGE,
+                headers={"Retry-After": "10"},
+            )
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Text-to-speech failed.")
 
 
 if __name__ == "__main__":

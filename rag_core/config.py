@@ -105,6 +105,9 @@ def get_llm(
             temperature=temp,
             timeout=config.llm_timeout,
             max_tokens=max_tok,
+            # 429 pe apne aap backoff karke retry — spiky traffic me yeh
+            # sabse zyada kaam ki setting hai.
+            max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "3")),
             streaming=streaming,
             callbacks=list(callbacks) if callbacks else None,
         )
