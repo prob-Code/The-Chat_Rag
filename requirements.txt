@@ -1,16 +1,28 @@
+# RagGita — serving dependencies only.
+#
+# NOTE: sentence-transformers yahan JAAN-BOOJH KE nahi hai.
+# Woh torch (~2.5 GB) laata hai aur sirf tab chahiye jab
+# USE_REMOTE_EMBEDDINGS=false ho. Default remote embeddings hai
+# (HuggingFace Inference API), toh yeh package dead weight tha —
+# Render ke 512 MB build ko yahi maar raha tha.
+#
+# Local embeddings chahiye toh:  pip install sentence-transformers
+# Ingest/rebuild scripts ke liye: pip install -r requirements-dev.txt
+
 langchain>=0.3.0
 langchain-community>=0.3.0
 langchain-core>=0.3.0
 langchain-huggingface>=0.1.0
 langchain-openai>=0.2.0
 langchain-text-splitters>=0.3.0
-pypdf
-sentence-transformers
+
+openai>=1.40.0          # TTS endpoint seedhe isko use karta hai
 faiss-cpu
-requests
-python-dotenv
+huggingface_hub
+numpy
+
 fastapi
 uvicorn[standard]
 pydantic>=2.0
-huggingface_hub
-numpy
+python-dotenv
+requests

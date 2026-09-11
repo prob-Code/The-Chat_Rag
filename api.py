@@ -147,10 +147,27 @@ async def lifespan(app: FastAPI):
                 endpoint_kwargs["huggingfacehub_api_token"] = hf_token
             embedding_model = HuggingFaceEndpointEmbeddings(**endpoint_kwargs)
         else:
-            logger.info("Using local HuggingFace embeddings (all-MiniLM-L6-v2)")
-            embedding_model = HuggingFaceEmbeddings(
-                model_name="sentence-transformers/all-MiniLM-L6-v2"
-            )
+            # sentence-transformers ab requirements.txt me nahi hai (torch ~2.5GB
+            # laata tha aur Render ka build maar raha tha). Agar koi local
+            # embeddings maange bina usse install kiye, toh crash karne ke bajaye
+            # remote pe gir jao — app chalta rehna chahiye.
+            try:
+                logger.info("Using local HuggingFace embeddings (all-MiniLM-L6-v2)")
+                embedding_model = HuggingFaceEmbeddings(
+                    model_name="sentence-transformers/all-MiniLM-L6-v2"
+                )
+            except ImportError:
+                logger.warning(
+                    "sentence-transformers not installed; falling back to the "
+                    "HuggingFace Inference API. Install it, or set "
+                    "USE_REMOTE_EMBEDDINGS=true to silence this."
+                )
+                if HuggingFaceEndpointEmbeddings is None:
+                    raise
+                endpoint_kwargs = {"model": "sentence-transformers/all-MiniLM-L6-v2"}
+                if hf_token:
+                    endpoint_kwargs["huggingfacehub_api_token"] = hf_token
+                embedding_model = HuggingFaceEndpointEmbeddings(**endpoint_kwargs)
 
         logger.info("Loading FAISS vector database...")
         db = FAISS.load_local(

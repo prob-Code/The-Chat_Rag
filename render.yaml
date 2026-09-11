@@ -1,5 +1,12 @@
 # Render Deployment Configuration
 # Docs: https://render.com/docs/yaml-spec
+#
+# FIXED (Sept 2026) — pehle har deploy fail ho raha tha kyunki
+# requirements.txt me sentence-transformers tha, jo torch (~2.5 GB) laata hai
+# aur Render ke free tier ka build usi pe mar jaata tha.
+# Ab requirements.txt se woh nikal gaya hai, so yeh build hona chahiye.
+#
+# Saath me LLM backend Groq se OpenAI pe move kiya gaya hai.
 
 services:
   - type: web
@@ -10,24 +17,54 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.12"
-      # Groq LLM Configuration
+
+      # ── LLM: OpenAI ──
       - key: OPENAI_API_KEY
-        sync: false  # Set this manually in Render dashboard (your Groq API key)
-      - key: GROQ_API_KEY
-        sync: false  # Set this manually in Render dashboard
+        sync: false                       # Render dashboard me manually set karo
       - key: OPENAI_API_BASE
-        value: "https://api.groq.com/openai/v1"
+        value: "https://api.openai.com/v1"
       - key: LLM_MODEL
-        value: "llama-3.1-8b-instant"
-      # Use remote embeddings to fit within Render's 512MB RAM limit
+        value: "gpt-4o-mini"
+      - key: LLM_MAX_TOKENS
+        value: "220"
+      - key: LLM_TEMPERATURE
+        value: "0.6"
+      - key: OPENAI_MAX_RETRIES
+        value: "3"
+
+      # ── Retrieval ──
+      # Remote embeddings zaroori hai — Render free tier 512 MB hai,
+      # local model load karne ki jagah nahi.
       - key: USE_REMOTE_EMBEDDINGS
         value: "true"
-      # (Optional) Hugging Face token for higher rate limits on Inference API
+      - key: MAX_CONTEXT_CHARS
+        value: "2500"
+      - key: FAST_TOP_K
+        value: "3"
       - key: HF_TOKEN
-        sync: false
-      # Disable Bytez (using Groq instead)
+        sync: false                       # optional, HF rate limits ke liye
+
+      # ── Voice ──
+      - key: ENABLE_TTS
+        value: "true"
+      - key: TTS_MODEL
+        value: "gpt-4o-mini-tts"
+      - key: TTS_VOICE
+        value: "sage"
+
+      # ── Abuse guard ──
+      - key: GUARD_ENABLED
+        value: "true"
+      - key: RATE_LIMIT_PER_MIN
+        value: "8"
+      - key: RATE_LIMIT_PER_HOUR
+        value: "80"
+      - key: DAILY_REQUEST_BUDGET
+        value: "3000"
+
       - key: USE_BYTEZ
         value: "false"
+
     healthCheckPath: /health
     autoDeploy: true
-    plan: free  # Change to 'starter' or 'standard' for production
+    plan: free
