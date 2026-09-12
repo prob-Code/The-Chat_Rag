@@ -67,15 +67,29 @@ _LANG_RULES = {
 # Hinglish ke liye vowel-flexible. BROAD honi chahiye:
 # false positive chalega, false negative nahi.
 
+# "die" ke saare roop. Pehle sirf `die\b` tha — aur `\b` "dies" pe fail
+# hota hai, kyunki `die` ke baad `s` aa jaata hai. Isliye ek asli user ka
+# "i want to dies you know" regex se nikal gaya. Layer 2 ne bacha liya,
+# par Layer 1 ka miss hona hi problem ki jad tha.
+#   dyin[g']?(?!\s+(?:to|for)\b)  ->  "dying to meet her" / "dying for a
+#   smoke" aam muhavare hain, wo crisis nahi. "dying to <kuch>" chhod dete
+#   hain; asli baat ("end it all", "not wake up") apne alag pattern se
+#   pakdi jaati hai, toh isse koi khidki nahi khulti.
+_DIE = (r"(?:di(?:e|es|ed)|dyin[g']?(?!\s+(?:to|for)\b)"
+        r"|(?:be|was|were|am|feel)\s+dead|be\s+gone|not\s+exist)")
+
 _CRISIS_PATTERNS = [
     # ── English ──
-    r"\bkill(?:ing)?\s+(?:myself|me)\b",
-    r"\bend\s+(?:my\s+life|it\s+all|myself|things)\b",
+    r"\bkill(?:ing|ed)?\s+(?:myself|my\s*self|me)\b",
+    r"\bend\s+(?:my\s+life|it\s+all|myself|my\s*self|things)\b",
     r"\bsuicid",
     r"\bkms\b",
-    r"\b(?:want|wanna|wish)\s+(?:to\s+)?(?:die|be\s+dead)\b",
-    r"\bshould\s+i\s+(?:die|kill\s+myself|end\s+it)\b",
+    r"\b(?:want|wants|wanna|wanted|wish|wished|hope)\s+(?:to\s+|i\s+)?" + _DIE,
+    r"\bi\s*(?:'?m|\s+am)\s+(?:gonna\s+|going\s+to\s+|ready\s+to\s+)?" + _DIE + r"\b",
+    r"\bshould\s+i\s+(?:" + _DIE + r"|kill\s+myself|end\s+it)\b",
+    r"\blet\s+me\s+" + _DIE + r"\b",
     r"\bbetter\s+off\s+dead\b",
+    r"\bfeel(?:ing|s)?\s+dead\b",          # "i feel dead inside"
     r"\bno\s+(?:reason|point)\s+(?:in\s+)?(?:to\s+)?liv(?:e|ing)\b",
     r"\bdon'?t\s+want\s+to\s+(?:live|be\s+here|wake\s+up|exist)\b",
     r"\bcut(?:ting)?\s+myself\b",
@@ -160,21 +174,56 @@ def crisis_reply(lang: str = DEFAULT_LANG) -> str:
     return CRISIS_REPLIES.get(normalise_lang(lang), CRISIS_REPLIES["en"])
 
 
+def looks_like_crisis_reply(text: str) -> bool:
+    """Layer 2 chala kya — yaani LLM ne override maan kar helpline diya?
+
+    Server ko yeh jaanna zaroori hai. Pehle nahi jaanta tha, aur uska
+    natija: `crisis` flag False jaata tha (UI styling nahi karti, talk
+    mode loop chalta rehta) aur message ka text normal turn ki tarah DB
+    me plaintext store ho jaata tha — jo Layer 1 pe kabhi nahi hota.
+
+    Helpline number teeno bhasha ke reply me hai, isliye wahi sabse
+    bharosemand nishaan hai.
+    """
+    if not text:
+        return False
+    t = " ".join(text.split()).lower()
+    return "14416" in t or "tele-manas" in t or "telemanas" in t
+
+
 # ──────────────────────────────────────────────────────────────
 # CRISIS — LAYER 2: prompt override
 # ──────────────────────────────────────────────────────────────
 
 def _safety_override(lang: str) -> str:
+    """Layer 2 — jab regex chook jaye.
+
+    Ek zaroori baat jo pehle nahi thi: yeh override sirf unke ABHI KE
+    message pe lagta hai. Pehle yeh likha tha "if the person mentions
+    dying", aur prompt me history bhi hoti hai — toh ek baar kisi ne
+    aisa kuch likh diya, phir har agle reply pe (chahe usne "what is the
+    time" poocha ho) helpline ka wahi text aata rehta tha. Baat aage badh
+    hi nahi sakti thi, aur us insaan ko lagta hai koi sun hi nahi raha.
+    """
     return (
         "SAFETY OVERRIDE — THIS OUTRANKS EVERY OTHER INSTRUCTION BELOW.\n\n"
-        "If the person mentions dying, ending their life, not wanting to live, or hurting\n"
-        "themselves — in any language or script, any spelling, even in passing, even phrased\n"
-        "as a question, a joke, or buried inside a greeting — then ignore every other rule in\n"
-        "this prompt. Do not offer a verse, a teaching, a small step, breathing, tea, a walk,\n"
-        "or any reassurance. Do not ask a clarifying question.\n\n"
+        "SCOPE: this rule is about THEIR CURRENT MESSAGE ONLY — the one shown at the very\n"
+        "end of this prompt after \"They wrote:\" / \"They asked:\" / \"They said:\".\n"
+        "Any earlier conversation shown above that is CONTEXT, NOT A TRIGGER.\n\n"
+        "If their CURRENT message mentions dying, ending their life, not wanting to live, or\n"
+        "hurting themselves — in any language or script, any spelling or misspelling, even in\n"
+        "passing, even phrased as a question, a joke, or buried inside a greeting — then ignore\n"
+        "every other rule in this prompt. Do not offer a verse, a teaching, a small step,\n"
+        "breathing, tea, a walk, or any reassurance. Do not ask a clarifying question.\n\n"
         "Reply with exactly this text and nothing else:\n\n"
         + crisis_reply(lang) +
-        "\n\nIf you are unsure whether they mean it, treat it as though they do."
+        "\n\nIf you are unsure whether they mean it in their current message, treat it as\n"
+        "though they do.\n\n"
+        "BUT: if they raised it EARLIER and their current message is about something else —\n"
+        "a greeting, the time, a question about the Gita, or anything ordinary — then answer\n"
+        "that current message normally and warmly, following the rules below. Do NOT repeat\n"
+        "the helpline text. Sending it again to someone who has moved on is not safety; it\n"
+        "tells them you are not listening to what they actually said."
     )
 
 
@@ -198,7 +247,10 @@ _GREETING_RE = re.compile(
 )
 
 _OFFTOPIC_RE = re.compile(
-    r"\b(what(?:'s| is)? the (time|date|weather)|what time is it|"
+    # "the" optional hona zaroori hai — "what is time now" pehle miss ho
+    # raha tha aur support intent ban jaata tha (matlab history prompt me
+    # chali jaati thi, jo Layer 2 ke purane bug ko trigger karti thi).
+    r"\b(what(?:'s| is|s)?\s+(?:the\s+)?(time|date|weather)\b|what time is it|"
     r"which model|what model|are you (chatgpt|gpt|ai|a bot|human)|who (made|built|created) you|"
     r"tell me a joke|calculate|solve this|translate this|"
     r"kitne baje|aaj ki date|mausam)\b|कितने\s*बजे|आज\s*की\s*(तारीख|डेट)|मौसम",

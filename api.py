@@ -41,7 +41,7 @@ from rag_core.config import LightRAGConfig, get_llm
 from rag_core.streaming import TokenQueueCallbackHandler
 from rag_core.prompts import (
     analyse, get_prompt_template, is_crisis,
-    crisis_reply, normalise_lang, public_langs, DEFAULT_LANG,
+    crisis_reply, looks_like_crisis_reply, normalise_lang, public_langs, DEFAULT_LANG,
 )
 from rag_core.gita_map import public_classes
 from rag_core.guard import enforce as guard_enforce
@@ -421,14 +421,30 @@ def _generate(question, user_class, lang, uid, conv_id, retrieve) -> ChatRespons
     answer = (prompt | llm).invoke(variables)
     text = answer.content
 
-    turns = store.save_turn(uid, conv_id, question, text,
-                            user_class=meta["user_class"], lang=meta["lang"])
+    # Layer 2 chal gaya? Regex chooka par LLM ne override maan liya.
+    # Do cheezein zaroori hain:
+    #  1. Text hum KHUD ka bhejte hain, LLM ka paraphrase nahi. Helpline
+    #     ka number LLM ke bharose chhodna theek nahi — ek digit galat
+    #     hui toh wo sabse bura bug hoga jo iss app me ho sakta hai.
+    #  2. Turn ko crisis maan kar save karo, taaki text store na ho —
+    #     Layer 1 pe bhi yahi hota hai.
+    layer2 = looks_like_crisis_reply(text)
+    if layer2:
+        logger.warning("LAYER 2 crisis override fired (regex missed it) "
+                       "uid=%s conv=%s — pattern list dekhni chahiye",
+                       uid[:12], conv_id[:8])
+        text = crisis_reply(meta["lang"])
 
-    if turns and turns % store.SUMMARISE_EVERY == 0:
+    turns = store.save_turn(uid, conv_id, question, text,
+                            user_class="crisis" if layer2 else meta["user_class"],
+                            lang=meta["lang"], crisis=layer2)
+
+    if not layer2 and turns and turns % store.SUMMARISE_EVERY == 0:
         _, recent = store.load_memory(uid, conv_id, turns=store.SUMMARISE_EVERY * 2)
         _summarise(conv_id, uid, summary, recent, meta["lang"])
 
-    return ChatResponse(answer=text, sources=[], user_class=meta["user_class"],
+    return ChatResponse(answer=text, sources=[], crisis=layer2,
+                        user_class="crisis" if layer2 else meta["user_class"],
                         lang=meta["lang"], conversation_id=conv_id)
 
 
