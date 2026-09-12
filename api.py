@@ -47,6 +47,7 @@ from rag_core.gita_map import public_classes
 from rag_core.guard import enforce as guard_enforce
 from rag_core.prompts import format_history
 from rag_core import store
+from rag_core import auth
 
 import requests
 import uuid
@@ -98,23 +99,36 @@ def _llm_ping() -> bool:
 
 
 def user_id(request: Request, body_uid: str = "") -> str:
-    """Kaun bol raha hai.
+    """Kaun bol raha hai. Poore app me identity ka ek hi source yahi hai.
 
-    Abhi: client ek stable device id bhejta hai (X-User-Id header ya body me).
-    Aage: Firebase ID token verify karke uska `sub` yahan se return hoga —
-    baaki poore app ko farq nahi padega, kyunki sab yahi function poochta hai.
+    Teen level, is kram me:
+      1. Firebase ID token  -> "fb:<uid>"     asli login, devices ke aar-paar chalta hai
+      2. X-User-Id header   -> device id      anonymous, ek device tak
+      3. IP                 -> "anon-<ip>"    aakhri sahara
+
+    Anonymous jaan-boojh ke allowed hai. Mental health app me sign-in
+    zabardasti karna sabse bura barrier hai — log sabse buri raat me
+    account nahi banate. Jo sign in karte hain unhe multi-device history
+    milti hai; jo nahi karte unhe bhi app milta hai.
     """
-    # Firebase ka seam. Token abhi verify nahi hota; jab hoga, bas yahan hoga.
-    auth = request.headers.get("authorization", "")
-    if auth.lower().startswith("bearer ") and os.getenv("FIREBASE_PROJECT_ID", "").strip():
-        # TODO: verify_firebase_token(auth[7:]) -> uid
-        pass
+    header = request.headers.get("authorization", "")
+    if header.lower().startswith("bearer ") and auth.enabled():
+        token = header[7:].strip()
+        try:
+            return "fb:" + auth.verify_firebase_token(token)
+        except auth.AuthError as e:
+            # Token bheja gaya par galat hai — chupchaap anonymous pe girana
+            # galat hoga, warna user ko lagega uska account kaam kar raha hai
+            # jabki history kahin aur ja rahi hai.
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Sign-in expired or invalid. {e}",
+            )
 
     uid = (body_uid or request.headers.get("x-user-id", "")).strip()
     if uid:
         return uid[:64]
 
-    # Anonymous fallback — IP se derive karo taaki quota kaam karta rahe
     from rag_core.guard import client_ip
     return "anon-" + client_ip(request).replace(":", "-")[:48]
 
@@ -418,7 +432,8 @@ def health_check():
 @app.get("/classes")
 def list_classes():
     return {"classes": public_classes(), "langs": public_langs(),
-            "tts_enabled": _tts_enabled(), "history_enabled": store.enabled()}
+            "tts_enabled": _tts_enabled(), "history_enabled": store.enabled(),
+            "auth_enabled": auth.enabled()}
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -623,6 +638,29 @@ def delete_conversation_endpoint(conversation_id: str, request: Request, user_id
     return {"deleted_messages": deleted, "conversation_id": conversation_id}
 
 
+class LinkRequest(BaseModel):
+    """Anonymous history ko abhi ke signed-in account se jodo."""
+    device_id: str = Field(..., min_length=1, max_length=64)
+
+
+@app.post("/link")
+def link_endpoint(payload: LinkRequest, request: Request):
+    """Sign-in ke baad ek baar call karo.
+
+    Koi pehle bina login chat karta hai, phir account banata hai — uski
+    purani baatein gayab nahi honi chahiye. Yeh unhe naye uid ke neeche
+    le aata hai.
+    """
+    uid = user_id(request)
+    if not uid.startswith("fb:"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sign in first, then link.",
+        )
+    moved = store.move_conversations(payload.device_id.strip(), uid)
+    return {"user_id": uid, "conversations_moved": moved}
+
+
 @app.delete("/me")
 def delete_me_endpoint(request: Request, user_id_q: str = ""):
     """Sab kuch mita do. DPDP ke under yeh optional nahi hai — aur isse
@@ -786,6 +824,11 @@ def diag_endpoint(token: str = ""):
         store.delete_conversation(uid, cid)
         return out
     check("storage", _store)
+    check("auth", lambda: {
+        "enabled": auth.enabled(),
+        "project_id": auth.project_id() or "(not set)",
+        "note": "anonymous device ids still work when this is off",
+    })
 
     check("startup", lambda: {
         "embedding_model": embedding_model is not None,

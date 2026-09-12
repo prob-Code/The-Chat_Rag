@@ -304,3 +304,35 @@ def check_quota(uid, limit=None):
     except Exception:
         logger.exception("check_quota failed (allowing request)")
         return True, 0
+
+
+def move_conversations(from_uid, to_uid):
+    """Anonymous history ko signed-in account me le jao.
+
+    Keys ka shape isse sasta bana deta hai: messages CONV#<id> ke neeche hain,
+    toh unhe chhoona hi nahi padta. Sirf ownership rows (USER#<uid> / CONV#<id>)
+    naye uid ke neeche likhni hoti hain.
+    """
+    t = table()
+    if t is None or from_uid == to_uid:
+        return 0
+    try:
+        from boto3.dynamodb.conditions import Key
+        res = t.query(
+            KeyConditionExpression=Key("PK").eq(f"USER#{from_uid}") & Key("SK").begins_with("CONV#")
+        )
+        items = res.get("Items", [])
+        if not items:
+            return 0
+        with t.batch_writer() as bw:
+            for i in items:
+                moved = dict(i)
+                moved["PK"] = f"USER#{to_uid}"
+                bw.put_item(Item=moved)
+                bw.delete_item(Key={"PK": i["PK"], "SK": i["SK"]})
+        logger.info("moved %d conversations from %s to %s",
+                    len(items), from_uid[:12], to_uid[:12])
+        return len(items)
+    except Exception:
+        logger.exception("move_conversations failed")
+        return 0
