@@ -209,6 +209,29 @@ def list_conversations(uid, limit=50):
         return []
 
 
+def owns_conversation(uid, conv_id) -> bool:
+    """Kya yeh chat iss user ki hai?
+
+    Messages `CONV#<id>` ke neeche rehte hain — uid unme kahin nahi aata.
+    Matlab get_messages() akela kabhi bharosemand nahi hai; ownership yahan
+    se check karni PADTI hai, warna koi bhi logged-in banda conversation id
+    jaan kar kisi aur ki poori chat padh sakta hai. Mental health app me
+    isse bura leak koi nahi.
+
+    Ownership row `USER#<uid> / CONV#<id>` hai — ek get_item, ek RCU.
+    """
+    t = table()
+    if t is None or not uid or not conv_id:
+        return False
+    try:
+        item = t.get_item(Key={"PK": f"USER#{uid}", "SK": f"CONV#{conv_id}"}).get("Item")
+        return bool(item)
+    except Exception:
+        # Check khud fail ho gaya toh "haan" kehna galat hai. Mana kar do.
+        logger.exception("owns_conversation check failed (denying)")
+        return False
+
+
 def get_messages(conv_id, limit=100):
     t = table()
     if t is None:
@@ -234,8 +257,20 @@ def get_messages(conv_id, limit=100):
 # ──────────────────────────────────────────────────────────────
 
 def delete_conversation(uid, conv_id):
+    """Ek chat mitao — SIRF agar wo iss user ki ho.
+
+    Pehle yahan ownership check nahi tha. `uid` ka istemaal sirf aakhir me
+    ownership row hataane me hota tha, aur messages `CONV#<id>` se bina
+    kisi check ke delete ho jaate the. Matlab koi bhi logged-in banda
+    kisi AUR ki poori chat mita sakta tha. Read leak se bhi bura, kyunki
+    iska koi undo nahi.
+    """
     t = table()
     if t is None:
+        return 0
+    if not owns_conversation(uid, conv_id):
+        logger.warning("delete_conversation denied: conv=%s not owned by uid=%s",
+                       str(conv_id)[:8], str(uid)[:12])
         return 0
     try:
         from boto3.dynamodb.conditions import Key

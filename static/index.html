@@ -93,7 +93,7 @@ body {
 }
 
 /* ═══ HEADER ═══ */
-.header { text-align: center; padding: 24px 0 14px; flex-shrink: 0; }
+.header { position: relative; text-align: center; padding: 24px 0 14px; flex-shrink: 0; }
 .header-icon {
   display: inline-flex; align-items: center; justify-content: center;
   width: 52px; height: 52px; border-radius: 16px;
@@ -473,6 +473,104 @@ body {
 }
 
 ::selection { background: rgba(212, 168, 67, 0.3); color: #fff; }
+
+/* ═══ LOGIN GATE ═══ */
+.gate {
+  position: fixed; inset: 0; z-index: 200;
+  display: none; flex-direction: column; align-items: center; justify-content: center;
+  gap: 18px; padding: 28px 22px; text-align: center;
+  background: rgba(10, 6, 18, 0.93); backdrop-filter: blur(18px);
+}
+.gate.visible { display: flex; }
+.gate-icon {
+  width: 62px; height: 62px; border-radius: 18px; font-size: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--gold-dim); border: 1px solid rgba(212, 168, 67, 0.28);
+}
+.gate h2 {
+  font-family: 'Playfair Display', Georgia, serif; font-weight: 600; font-size: 1.9rem;
+  background: linear-gradient(135deg, var(--gold-light), var(--gold));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.gate p { max-width: 340px; font-size: 0.88rem; line-height: 1.6; color: var(--text-secondary); }
+.gate-google {
+  display: inline-flex; align-items: center; gap: 10px; margin-top: 4px;
+  padding: 12px 22px; border-radius: 999px; cursor: pointer;
+  font: inherit; font-size: 0.9rem; font-weight: 500;
+  background: #fff; color: #1f1f1f; border: 0;
+  transition: transform .15s, box-shadow .2s;
+}
+.gate-google:hover { transform: translateY(-1px); box-shadow: 0 6px 22px rgba(0,0,0,.35); }
+.gate-google:disabled { opacity: .6; cursor: default; transform: none; }
+.gate-err { font-size: 0.8rem; color: var(--error); min-height: 18px; max-width: 340px; }
+.gate-note { font-size: 0.72rem; color: var(--text-muted); max-width: 320px; line-height: 1.5; }
+
+/* ═══ CHAT HISTORY SIDEBAR ═══ */
+.side-toggle {
+  position: absolute; top: 26px; left: 0;
+  width: 38px; height: 38px; border-radius: 11px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--glass); border: 1px solid var(--glass-border); color: var(--text-secondary);
+}
+.side-toggle:hover { color: var(--text-primary); background: rgba(255,255,255,.1); }
+.side-toggle svg { width: 18px; height: 18px; fill: currentColor; }
+.side-scrim {
+  position: fixed; inset: 0; z-index: 120; background: rgba(0,0,0,.5);
+  opacity: 0; pointer-events: none; transition: opacity .25s;
+}
+.side-scrim.open { opacity: 1; pointer-events: auto; }
+.sidebar {
+  position: fixed; top: 0; left: 0; bottom: 0; z-index: 130;
+  width: 285px; max-width: 84vw; display: flex; flex-direction: column;
+  background: #130e22; border-right: 1px solid var(--glass-border);
+  transform: translateX(-102%); transition: transform .25s ease;
+}
+.sidebar.open { transform: translateX(0); }
+.side-head {
+  padding: 16px 14px 12px; border-bottom: 1px solid var(--glass-border);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.side-title { font-size: 0.72rem; letter-spacing: .09em; text-transform: uppercase; color: var(--text-muted); }
+.new-chat {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 9px 12px; border-radius: var(--radius-sm); cursor: pointer;
+  font: inherit; font-size: 0.84rem; text-align: left;
+  background: var(--gold-dim); color: var(--gold-light);
+  border: 1px solid rgba(212,168,67,.3);
+}
+.new-chat:hover { background: rgba(212,168,67,.22); }
+.conv-list { flex: 1; overflow-y: auto; padding: 8px; }
+.conv-list::-webkit-scrollbar { width: 5px; }
+.conv-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 10px; }
+.conv-item {
+  position: relative; padding: 9px 30px 9px 11px; margin-bottom: 3px;
+  border-radius: var(--radius-sm); cursor: pointer; border: 1px solid transparent;
+}
+.conv-item:hover { background: rgba(255,255,255,.05); }
+.conv-item.active { background: rgba(255,255,255,.08); border-color: var(--glass-border); }
+.conv-item .ct {
+  font-size: 0.82rem; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.conv-item .cd { font-size: 0.68rem; color: var(--text-muted); margin-top: 3px; }
+.conv-del {
+  position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+  width: 22px; height: 22px; border: 0; border-radius: 6px; cursor: pointer;
+  background: transparent; color: var(--text-muted); font-size: 14px; line-height: 1;
+  opacity: 0; transition: opacity .15s;
+}
+.conv-item:hover .conv-del { opacity: 1; }
+.conv-del:hover { color: var(--error); background: rgba(224,85,85,.12); }
+.conv-empty { padding: 22px 14px; font-size: 0.8rem; color: var(--text-muted); text-align: center; line-height: 1.6; }
+.side-foot {
+  padding: 12px 14px; border-top: 1px solid var(--glass-border);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 0.78rem; color: var(--text-secondary);
+}
+.side-foot .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 480px) {
+  .side-toggle { top: 14px; width: 34px; height: 34px; }
+}
 </style>
 
 <!-- ══════════════════════════════════════════════════════════════
@@ -489,6 +587,13 @@ body {
      ══════════════════════════════════════════════════════════════ -->
 <script type="module">
 const FIREBASE_ON = true;          // config bharne ke baad true kar do
+
+// Hard login gate. Backend ke REQUIRE_AUTH se MATCH karna chahiye.
+// true  -> bina Google sign-in kuch nahi khulta; anonymous sign-in hota hi nahi
+// false -> anonymous chalta hai, sign-in optional
+// Yaad rakho: asli enforcement backend pe hai. Yeh flag sirf UI ka rukh hai —
+// UI chhupa dena koi security nahi hoti.
+const REQUIRE_LOGIN = true;
 
 const firebaseConfig = {
   apiKey:            'AIzaSyDiRGj-hlHnjnqRC21LeVikYw_l5MWqA50',
@@ -511,6 +616,8 @@ const off = {
   signOut: async () => {},
   onChange: () => {},
   enabled: false,
+  requireLogin: false,
+  signedIn: () => false,
 };
 
 if (!FIREBASE_ON || firebaseConfig.apiKey === 'REPLACE_ME') {
@@ -538,9 +645,14 @@ if (!FIREBASE_ON || firebaseConfig.apiKey === 'REPLACE_ME') {
         listeners.forEach((fn) => { try { fn(user); } catch {} });
         if (settled) return;
         settled = true;
+
+        // Hard gate: signed-in user na ho toh null. Anonymous sign-in
+        // bulate hi nahi — warna gate bina login ke khul jaata.
+        if (REQUIRE_LOGIN) return resolve(user && !user.isAnonymous ? user : null);
+
         if (user) return resolve(user);
-        // Bina login bhi asli uid mil jaata hai. Baad me Google se
-        // link karne pe YAHI uid rehta hai, toh history saath aati hai.
+        // Soft mode: bina login bhi asli uid mil jaata hai. Baad me Google
+        // se link karne pe YAHI uid rehta hai, toh history saath aati hai.
         try { resolve((await signInAnonymously(auth)).user); }
         catch (e) { console.warn('anonymous sign-in failed', e); resolve(null); }
       });
@@ -574,6 +686,8 @@ if (!FIREBASE_ON || firebaseConfig.apiKey === 'REPLACE_ME') {
       },
 
       signOut: () => signOut(auth),
+      requireLogin: REQUIRE_LOGIN,
+      signedIn: () => !!auth.currentUser && !(REQUIRE_LOGIN && auth.currentUser.isAnonymous),
     };
   } catch (e) {
     console.warn('Firebase load failed; chat device-id se chalegi', e);
@@ -588,9 +702,56 @@ if (!FIREBASE_ON || firebaseConfig.apiKey === 'REPLACE_ME') {
 <div class="bg-layer"></div>
 <div class="mandala-overlay"></div>
 
+<!-- ═══ LOGIN GATE ═══
+     Poore app ke upar baithta hai. Hard gate hai: bina sign-in kuch nahi
+     khulta. Backend pe REQUIRE_AUTH=true isse enforce karta hai — sirf UI
+     chhupana kaafi nahi hota, wo koi bhi bypass kar leta. -->
+<div class="gate" id="gate">
+  <div class="gate-icon">🙏</div>
+  <h2>RagGita</h2>
+  <p>Apni baat yahan rakhne ke liye pehle sign in karo. Isse tumhari
+     baatein sirf tumhare account me rehti hain, aur kisi bhi phone se
+     wahi chat aage badh sakti hai.</p>
+  <button class="gate-google" id="gateGoogle">
+    <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+      <path fill="#4285F4" d="M23 12.2c0-.8-.1-1.6-.2-2.3H12v4.4h6.2a5.3 5.3 0 0 1-2.3 3.5v2.9h3.7c2.2-2 3.4-4.9 3.4-8.5z"/>
+      <path fill="#34A853" d="M12 24c3.1 0 5.7-1 7.6-2.8l-3.7-2.9c-1 .7-2.3 1.1-3.9 1.1-3 0-5.6-2-6.5-4.8H1.7v3c1.9 3.8 5.8 6.4 10.3 6.4z"/>
+      <path fill="#FBBC05" d="M5.5 14.6a7.2 7.2 0 0 1 0-4.6v-3H1.7a12 12 0 0 0 0 10.6l3.8-3z"/>
+      <path fill="#EA4335" d="M12 4.8c1.7 0 3.2.6 4.4 1.7l3.3-3.3C17.7 1.2 15.1 0 12 0 7.5 0 3.6 2.6 1.7 6.4l3.8 3C6.4 6.7 9 4.8 12 4.8z"/>
+    </svg>
+    <span id="gateGoogleLabel">Continue with Google</span>
+  </button>
+  <div class="gate-err" id="gateErr"></div>
+  <div class="gate-note">
+    Ye ek companion hai, professional care ka badal nahi.
+    Agar abhi bahut bhaari lag raha hai — Tele-MANAS <strong>14416</strong>, 24/7, muft.
+  </div>
+</div>
+
+<!-- ═══ CHAT HISTORY SIDEBAR ═══ -->
+<div class="side-scrim" id="sideScrim"></div>
+<aside class="sidebar" id="sidebar">
+  <div class="side-head">
+    <div class="side-title">Your chats</div>
+    <button class="new-chat" id="newChatBtn">
+      <span aria-hidden="true">＋</span><span>Nayi baat shuru karo</span>
+    </button>
+  </div>
+  <div class="conv-list" id="convList">
+    <div class="conv-empty">Loading…</div>
+  </div>
+  <div class="side-foot">
+    <span class="who" id="sideWho"></span>
+    <button class="auth-link" id="signOutBtn2">Sign out</button>
+  </div>
+</aside>
+
 <div class="app-wrapper">
 
   <header class="header">
+    <button class="side-toggle" id="sideToggle" title="Your chats" aria-label="Open chat history">
+      <svg viewBox="0 0 24 24"><path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/></svg>
+    </button>
     <div class="header-icon">🙏</div>
     <h1>RagGita</h1>
     <p class="subtitle">Your Compassionate Spiritual Guide</p>
@@ -759,7 +920,7 @@ const DEVICE_ID = deviceId();
 async function authHeaders() {
   const h = { 'Content-Type': 'application/json', 'X-User-Id': DEVICE_ID };
   try {
-    const t = await window.RagAuth?.idToken?.();
+    const t = await (RA || window.RagAuth)?.idToken?.();
     if (t) h['Authorization'] = 'Bearer ' + t;
   } catch {}
   return h;
@@ -1173,6 +1334,7 @@ async function handleTalkTurn(text) {
       body: JSON.stringify({ question: text, user_class: currentClass, lang: currentLang,
                              conversation_id: conversationId })
     });
+    if (res.status === 401) { endTalk(); handleUnauthorised(); return; }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const data = await res.json();
@@ -1261,6 +1423,9 @@ async function sendMessage(fromVoice) {
 
     if (!res.ok) {
       const errData = await res.json().catch(() => ({ detail: 'Unknown error' }));
+      // 401 = session gir gaya ya token expire. "Server error" dikhana galat
+      // hoga — user ko sirf dobara sign in karna hai.
+      if (res.status === 401) { handleUnauthorised(); return; }
       throw new Error(errData.detail || `HTTP ${res.status}`);
     }
 
@@ -1335,14 +1500,45 @@ const signOutBtn = document.getElementById('signOutBtn');
 const authWho    = document.getElementById('authWho');
 const authName   = document.getElementById('authName');
 
+const gate        = document.getElementById('gate');
+const gateGoogle  = document.getElementById('gateGoogle');
+const gateErr     = document.getElementById('gateErr');
+const gateLabel   = document.getElementById('gateGoogleLabel');
+
+const sidebar     = document.getElementById('sidebar');
+const sideScrim   = document.getElementById('sideScrim');
+const sideToggle  = document.getElementById('sideToggle');
+const convList    = document.getElementById('convList');
+const newChatBtn  = document.getElementById('newChatBtn');
+const sideWho     = document.getElementById('sideWho');
+const signOutBtn2 = document.getElementById('signOutBtn2');
+
+// Auth object ek hi baar pakadte hain. Pehle kuch functions `window.RagAuth`
+// fresh padhte the aur kuch ek capture kiya `A` use karte the — wo dono
+// diverge ho sakte hain (module script deferred hota hai, toh window.RagAuth
+// baad me badal sakta hai), aur phir UI aadha-adhoora update hota hai.
+let RA = null;
+
 function paintAuth() {
-  const A = window.RagAuth;
-  if (!A?.enabled) { authStrip.hidden = true; return; }
-  authStrip.hidden = false;
-  const signedIn = A.uid() && !A.isAnonymous();
-  signInBtn.hidden = signedIn;
-  authWho.hidden   = !signedIn;
-  if (signedIn) authName.textContent = A.displayName() || 'Signed in';
+  const A = RA;
+  const signedIn = !!A?.signedIn?.();
+
+  // Hard gate: login na hone tak poora app dhaka rehta hai
+  if (A?.enabled && A.requireLogin) {
+    gate.classList.toggle('visible', !signedIn);
+    authStrip.hidden = true;               // header ki strip ki zaroorat nahi
+    sideToggle.hidden = !signedIn;
+  } else {
+    gate.classList.remove('visible');
+    sideToggle.hidden = !A?.enabled;
+    authStrip.hidden = !A?.enabled;
+    if (A?.enabled) {
+      signInBtn.hidden = signedIn;
+      authWho.hidden   = !signedIn;
+      if (signedIn) authName.textContent = A.displayName() || 'Signed in';
+    }
+  }
+  sideWho.textContent = signedIn ? (A.displayName() || 'Signed in') : '';
 }
 
 // Sign-in ke baad bina-login wali chat naye account ke neeche le aao.
@@ -1363,37 +1559,233 @@ async function linkOldChats() {
   } catch (e) { console.warn('link skipped', e); }
 }
 
-function wireAuth() {
-  const A = window.RagAuth;
+// ══════════════════════════════════════
+// CHAT HISTORY SIDEBAR
+// ══════════════════════════════════════
+
+function openSide(on) {
+  sidebar.classList.toggle('open', on);
+  sideScrim.classList.toggle('open', on);
+  if (on) loadConversations();
+}
+
+function friendlyTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (mins < 1)    return 'abhi';
+  if (mins < 60)   return `${mins} min pehle`;
+  if (mins < 1440) return `${Math.floor(mins / 60)} ghante pehle`;
+  if (mins < 2880) return 'kal';
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+}
+
+async function loadConversations() {
+  try {
+    const res = await fetch(`${API_BASE}/conversations`, { headers: await authHeaders() });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderConversations(data.conversations || []);
+  } catch (e) {
+    convList.innerHTML = '<div class="conv-empty">Chats load nahi hui.<br>Dobara try karo.</div>';
+  }
+}
+
+function renderConversations(list) {
+  convList.innerHTML = '';
+  if (!list.length) {
+    convList.innerHTML =
+      '<div class="conv-empty">Abhi koi chat nahi.<br>Neeche kuch likho, yahan dikhne lagegi.</div>';
+    return;
+  }
+  for (const c of list) {
+    const item = document.createElement('div');
+    item.className = 'conv-item' + (c.conversation_id === conversationId ? ' active' : '');
+
+    const t = document.createElement('div');
+    t.className = 'ct';
+    t.textContent = c.title || 'Nayi baat';
+
+    const d = document.createElement('div');
+    d.className = 'cd';
+    const when = friendlyTime(c.last_message_at);
+    d.textContent = [when, c.turns ? `${c.turns} messages` : ''].filter(Boolean).join(' · ');
+
+    const del = document.createElement('button');
+    del.className = 'conv-del';
+    del.textContent = '×';
+    del.title = 'Delete this chat';
+    del.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      deleteConversation(c.conversation_id, item);
+    });
+
+    item.append(t, d, del);
+    item.addEventListener('click', () => openConversation(c.conversation_id));
+    convList.appendChild(item);
+  }
+}
+
+async function openConversation(id) {
+  openSide(false);
+  if (id === conversationId && chatMessages.querySelector('.message-row')) return;
+
+  chatMessages.innerHTML = '<div class="conv-empty">Loading…</div>';
+  try {
+    const res = await fetch(`${API_BASE}/conversations/${encodeURIComponent(id)}`,
+                            { headers: await authHeaders() });
+    if (res.status === 404) throw new Error('not-found');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    conversationId = id;
+    store.set('raggita_conversation_id', id);
+
+    chatMessages.innerHTML = '';
+    for (const m of (data.messages || [])) {
+      if (m.role === 'user') addUserMessage(m.text);
+      else if (m.role === 'assistant') addBotMessage(m.text, false);
+      // role 'event' (crisis marker) jaan-boojh ke skip — usme text nahi hota
+    }
+    if (!chatMessages.querySelector('.message-row')) {
+      chatMessages.innerHTML = '<div class="conv-empty">Iss chat me kuch nahi mila.</div>';
+    }
+    scrollToBottom();
+  } catch (e) {
+    chatMessages.innerHTML =
+      '<div class="conv-empty">Ye chat nahi khul payi.<br>Nayi baat shuru kar lo.</div>';
+  }
+}
+
+async function deleteConversation(id, node) {
+  try {
+    const res = await fetch(`${API_BASE}/conversations/${encodeURIComponent(id)}`,
+                            { method: 'DELETE', headers: await authHeaders() });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    node.remove();
+    if (id === conversationId) startNewChat();
+    if (!convList.querySelector('.conv-item')) renderConversations([]);
+  } catch (e) {
+    console.warn('delete failed', e);
+  }
+}
+
+function startNewChat() {
+  conversationId = '';
+  store.set('raggita_conversation_id', '');
+  chatMessages.innerHTML = '';
+  addBotMessage('Kya chal raha hai mann me? Jo bhi hai, likh do.', false);
+  openSide(false);
+  questionInput.focus();
+}
+
+// ══════════════════════════════════════
+// AUTH WIRING
+// ══════════════════════════════════════
+
+// Token expire ho gaya ya session gir gaya. Ek baar chup-chaap refresh
+// karne ki koshish; na bane toh gate wapas dikha do.
+let _unauthBusy = false;
+async function handleUnauthorised() {
+  if (_unauthBusy) return;
+  _unauthBusy = true;
+  try {
+    const A = RA;
+    hideTyping();
+    if (A?.enabled && A.signedIn()) {
+      // SDK khud token refresh karta hai; ek retry ka mauka de do
+      const t = await A.idToken().catch(() => null);
+      if (t) {
+        showError('Connection thoda atka tha. Dobara bhej do.');
+        return;
+      }
+    }
+    if (A?.enabled && A.requireLogin) {
+      conversationId = '';
+      store.set('raggita_conversation_id', '');
+      gate.classList.add('visible');
+      gateErr.textContent = 'Session khatam ho gaya. Dobara sign in karo.';
+    } else {
+      showError('Sign-in expire ho gaya. Page refresh karo.');
+    }
+  } finally { _unauthBusy = false; }
+}
+
+async function afterSignedIn() {
   paintAuth();
-  if (!A?.enabled) return;
+  // Soft mode me hi matlab rakhta hai — hard gate pe anonymous history
+  // hoti hi nahi, kyunki bina login chat shuru hi nahi hoti.
+  if (!RA?.requireLogin) await linkOldChats();
+  loadConversations();
+}
 
-  A.onChange(paintAuth);
+function wireAuth() {
+  RA = window.RagAuth;
+  const A = RA;
+  paintAuth();
+  if (!A?.enabled) {
+    // Firebase off — pehle jaisa device-id waala mode. Sidebar bekaar hai.
+    sideToggle.hidden = true;
+    return;
+  }
 
-  signInBtn.addEventListener('click', async () => {
-    signInBtn.disabled = true;
+  A.onChange((user) => {
+    paintAuth();
+    if (A.signedIn()) loadConversations();
+  });
+
+  async function doSignIn(btn, label) {
+    btn.disabled = true;
+    gateErr.textContent = '';
+    if (label) label.textContent = 'Signing in…';
     try {
       await A.signInGoogle();
-      paintAuth();
-      await linkOldChats();
+      await afterSignedIn();
     } catch (e) {
       // Popup band kar dena galti nahi hai — uspe error mat dikhao.
-      if (e?.code !== 'auth/popup-closed-by-user'
-          && e?.code !== 'auth/cancelled-popup-request') {
+      if (e?.code === 'auth/popup-closed-by-user'
+          || e?.code === 'auth/cancelled-popup-request') { /* chup raho */ }
+      else if (e?.code === 'auth/unauthorized-domain') {
+        gateErr.textContent = 'Ye domain Firebase me authorized nahi hai. '
+          + '(Authentication → Settings → Authorized domains)';
+      } else if (e?.code === 'auth/popup-blocked') {
+        gateErr.textContent = 'Browser ne popup rok diya. Popup allow karke dobara try karo.';
+      } else {
         console.warn('sign-in failed', e);
-        addBotMessage('Sign-in poora nahi hua. Chat bina sign-in bhi chalti rahegi.', false);
+        gateErr.textContent = 'Sign-in poora nahi hua. Dobara try karo.';
       }
-    } finally { signInBtn.disabled = false; }
-  });
+    } finally {
+      btn.disabled = false;
+      if (label) label.textContent = 'Continue with Google';
+    }
+  }
 
-  signOutBtn.addEventListener('click', async () => {
+  gateGoogle.addEventListener('click', () => doSignIn(gateGoogle, gateLabel));
+  signInBtn.addEventListener('click', () => doSignIn(signInBtn, null));
+
+  async function doSignOut() {
     try { await A.signOut(); } catch {}
-    // Sign-out ke baad naya anonymous uid milta hai, toh chat bhi nayi.
     conversationId = '';
     store.set('raggita_conversation_id', '');
+    chatMessages.innerHTML = '';
+    openSide(false);
     paintAuth();
-  });
+  }
+  signOutBtn.addEventListener('click', doSignOut);
+  signOutBtn2.addEventListener('click', doSignOut);
+
+  // Pehle se signed in ho (browser me session pada hai) toh gate khud khul
+  // jaata hai aur chats load ho jaati hain.
+  A.ready.then(() => { paintAuth(); if (A.signedIn()) loadConversations(); });
 }
+
+sideToggle.addEventListener('click', () => openSide(!sidebar.classList.contains('open')));
+sideScrim.addEventListener('click', () => openSide(false));
+newChatBtn.addEventListener('click', startNewChat);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && sidebar.classList.contains('open')) openSide(false);
+});
 
 if (window.RagAuth) wireAuth();
 else window.addEventListener('ragauth-ready', wireAuth, { once: true });

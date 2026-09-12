@@ -80,11 +80,15 @@ def _load_certs(force=False):
     return _certs
 
 
-def verify_firebase_token(token: str) -> str:
-    """Token verify karo aur Firebase uid (`sub`) return karo.
+def verify_firebase_claims(token: str) -> dict:
+    """Token verify karo aur poore claims return karo.
 
     Fail hone pe AuthError uthata hai. Kabhi chupchaap pass nahi karta —
     auth me "shayad theek hai" ka koi matlab nahi.
+
+    Claims me `firebase.sign_in_provider` hota hai ("google.com",
+    "anonymous", waghairah) — hard login gate ke liye wahi dekhna padta
+    hai, kyunki anonymous ka token bhi poori tarah valid hota hai.
     """
     if not token:
         raise AuthError("No token provided.")
@@ -137,8 +141,28 @@ def verify_firebase_token(token: str) -> str:
         # InvalidAudienceError waghairah) — client ko woh dikhana theek hai.
         raise AuthError(f"{type(e).__name__}: {str(e)[:120]}") from e
 
-    uid = claims.get("sub") or ""
-    if not uid:
+    if not (claims.get("sub") or ""):
         raise AuthError("Token has no subject.")
 
-    return uid
+    return claims
+
+
+def verify_firebase_token(token: str) -> str:
+    """Sirf uid chahiye ho toh. (Purana naam — jahan claims ki zaroorat
+    nahi wahan yahi kaafi hai.)"""
+    return verify_firebase_claims(token)["sub"]
+
+
+def sign_in_provider(claims: dict) -> str:
+    """"google.com" / "anonymous" / "password" ... na mile toh khali."""
+    return (claims.get("firebase") or {}).get("sign_in_provider", "") or ""
+
+
+def is_anonymous(claims: dict) -> bool:
+    return sign_in_provider(claims) == "anonymous"
+
+
+def display_name(claims: dict) -> str:
+    """Log me daalne ke liye NAHI. Sirf /whoami jaisa response banane ke
+    liye, jahan user apni hi baat dekh raha hota hai."""
+    return (claims.get("name") or claims.get("email") or "").strip()

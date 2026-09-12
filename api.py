@@ -98,6 +98,26 @@ def _llm_ping() -> bool:
     return False
 
 
+def _flag(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "y")
+
+
+def require_auth() -> bool:
+    """Hard login gate. Sirf tab on hota hai jab Firebase bhi configured ho —
+    warna ek galat env var poore app ko band kar deta."""
+    return _flag("REQUIRE_AUTH") and auth.enabled()
+
+
+def allow_anonymous_auth() -> bool:
+    """Hard gate me Firebase ka anonymous sign-in bhi chalega ya nahi.
+
+    Default nahi. Anonymous ka token poori tarah valid hota hai, toh use
+    alag se rokna padta hai — warna "login zaroori hai" sirf kehne ki baat
+    reh jaati aur koi bhi client chupke anonymous token bana leta.
+    """
+    return _flag("ALLOW_ANONYMOUS_AUTH")
+
+
 def user_id(request: Request, body_uid: str = "") -> str:
     """Kaun bol raha hai. Poore app me identity ka ek hi source yahi hai.
 
@@ -106,16 +126,13 @@ def user_id(request: Request, body_uid: str = "") -> str:
       2. X-User-Id header   -> device id      anonymous, ek device tak
       3. IP                 -> "anon-<ip>"    aakhri sahara
 
-    Anonymous jaan-boojh ke allowed hai. Mental health app me sign-in
-    zabardasti karna sabse bura barrier hai — log sabse buri raat me
-    account nahi banate. Jo sign in karte hain unhe multi-device history
-    milti hai; jo nahi karte unhe bhi app milta hai.
+    REQUIRE_AUTH=true ho toh level 2 aur 3 band — bas asli login chalega.
     """
     header = request.headers.get("authorization", "")
     if header.lower().startswith("bearer ") and auth.enabled():
         token = header[7:].strip()
         try:
-            return "fb:" + auth.verify_firebase_token(token)
+            claims = auth.verify_firebase_claims(token)
         except auth.AuthError as e:
             # Token bheja gaya par galat hai — chupchaap anonymous pe girana
             # galat hoga, warna user ko lagega uska account kaam kar raha hai
@@ -125,12 +142,47 @@ def user_id(request: Request, body_uid: str = "") -> str:
                 detail=f"Sign-in expired or invalid. {e}",
             )
 
+        if require_auth() and auth.is_anonymous(claims) and not allow_anonymous_auth():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Please sign in with Google to continue.",
+            )
+        return "fb:" + claims["sub"]
+
+    if require_auth():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Please sign in to continue.",
+        )
+
     uid = (body_uid or request.headers.get("x-user-id", "")).strip()
     if uid:
         return uid[:64]
 
     from rag_core.guard import client_ip
     return "anon-" + client_ip(request).replace(":", "-")[:48]
+
+
+def _resolve_conv(uid: str, requested: str) -> str:
+    """Conversation id tay karo, ownership check ke saath.
+
+    Yeh chhoti si cheez zaroori hai. Client jo conversation_id bhejta hai
+    uspe bharosa nahi kiya ja sakta: kisi AUR ka id bhej do, aur _generate
+    uski history load kar ke reply me daal deta, aur naya turn uski chat me
+    likh deta. Owned na ho toh chupchaap nayi chat shuru kar dete hain —
+    error se behtar, kyunki device pe purana/deleted id bacha reh jaana
+    ek aam aur nirdosh baat hai.
+    """
+    requested = (requested or "").strip()
+    if not requested:
+        return store.new_conversation_id()
+    if not store.enabled():
+        return requested          # DB hi nahi hai, check ka matlab nahi
+    if store.owns_conversation(uid, requested):
+        return requested
+    logger.info("conv %s not owned by uid=%s; starting a new one",
+                requested[:8], uid[:12])
+    return store.new_conversation_id()
 
 
 def _clamp_top_k(k: int) -> int:
@@ -442,9 +494,13 @@ def health_check():
 
 @app.get("/classes")
 def list_classes():
+    # Yeh endpoint jaan-boojh ke khula hai — login gate se PEHLE frontend
+    # ko yahi se pata chalta hai ki gate on hai ya nahi.
     return {"classes": public_classes(), "langs": public_langs(),
             "tts_enabled": _tts_enabled(), "history_enabled": store.enabled(),
-            "auth_enabled": auth.enabled()}
+            "auth_enabled": auth.enabled(),
+            "require_auth": require_auth(),
+            "allow_anonymous": allow_anonymous_auth()}
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -459,7 +515,7 @@ def chat_endpoint(payload: ChatRequest, request: Request):
     # ORDER MATTERS: crisis check sabse pehle.
     # Yeh free hai (koi LLM call nahi), aur rate limit isse kabhi nahi rokta.
     uid = user_id(request, payload.user_id)
-    conv_id = payload.conversation_id or store.new_conversation_id()
+    conv_id = _resolve_conv(uid, payload.conversation_id)
 
     crisis = is_crisis(payload.question)
     if crisis:
@@ -511,7 +567,7 @@ def chat_fast_endpoint(payload: ChatRequest, request: Request):
         )
 
     uid = user_id(request, payload.user_id)
-    conv_id = payload.conversation_id or store.new_conversation_id()
+    conv_id = _resolve_conv(uid, payload.conversation_id)
 
     if is_crisis(payload.question):
         logger.info("Crisis guard triggered; returning helpline response.")
@@ -634,8 +690,18 @@ def list_conversations_endpoint(request: Request, user_id_q: str = ""):
 
 
 @app.get("/conversations/{conversation_id}")
-def get_conversation_endpoint(conversation_id: str, request: Request, limit: int = 100):
-    """Ek chat ke messages, purane se naye."""
+def get_conversation_endpoint(conversation_id: str, request: Request,
+                              user_id_q: str = "", limit: int = 100):
+    """Ek chat ke messages, purane se naye.
+
+    Ownership check zaroori hai. Yahan pehle wo nahi tha — matlab koi bhi
+    logged-in banda conversation id de kar kisi AUR ki chat padh sakta tha.
+    404 dete hain, 403 nahi: 403 se pata chal jaata ki wo chat maujood hai.
+    """
+    uid = user_id(request, user_id_q)
+    if not store.owns_conversation(uid, conversation_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Conversation not found.")
     return {
         "conversation_id": conversation_id,
         "messages": store.get_messages(conversation_id, limit=min(limit, 200)),
@@ -645,6 +711,9 @@ def get_conversation_endpoint(conversation_id: str, request: Request, limit: int
 @app.delete("/conversations/{conversation_id}")
 def delete_conversation_endpoint(conversation_id: str, request: Request, user_id_q: str = ""):
     uid = user_id(request, user_id_q)
+    if not store.owns_conversation(uid, conversation_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Conversation not found.")
     deleted = store.delete_conversation(uid, conversation_id)
     return {"deleted_messages": deleted, "conversation_id": conversation_id}
 
