@@ -437,6 +437,25 @@ body {
   .header { padding: 16px 0 10px; }
   .header h1 { font-size: 1.9rem; }
   .header .subtitle { font-size: 0.85rem; }
+.auth-strip { margin-top: 10px; display: flex; justify-content: center; }
+.auth-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 14px; border-radius: 999px; cursor: pointer;
+  font: inherit; font-size: 0.8rem; letter-spacing: .01em;
+  background: rgba(255,255,255,.07); color: inherit;
+  border: 1px solid rgba(255,255,255,.16);
+  transition: background .2s, border-color .2s;
+}
+.auth-btn:hover { background: rgba(255,255,255,.13); border-color: rgba(255,255,255,.3); }
+.auth-btn svg { flex: 0 0 auto; }
+.auth-who { display: flex; align-items: center; gap: 10px; font-size: 0.78rem; opacity: .8; }
+.auth-link {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; font-size: 0.78rem; color: inherit;
+  opacity: .7; text-decoration: underline;
+}
+.auth-link:hover { opacity: 1; }
+@media (max-width: 480px) { .auth-btn { font-size: 0.74rem; padding: 6px 11px; } }
   .class-bar { padding: 11px 2px 2px; gap: 6px; }
   .class-chip { padding: 5px 10px; font-size: 0.72rem; }
   .chat-messages { padding: 16px 12px; }
@@ -455,6 +474,114 @@ body {
 
 ::selection { background: rgba(212, 168, 67, 0.3); color: #fff; }
 </style>
+
+<!-- ══════════════════════════════════════════════════════════════
+     FIREBASE AUTH
+     Web pe Google sign-in seedha chalta hai (popup) — Expo Go wali
+     native-code ki dikkat yahan hai hi nahi.
+
+     Niche ka config SECRET NAHI hai. Client me rehna hi hota hai aur
+     GitHub pe bhi ja sakta hai. Security token verify karne se aati hai
+     (server pe rag_core/auth.py), config chhupane se nahi.
+
+     FIREBASE_ON = false rahega toh poora auth chup-chaap band rehta hai
+     aur app pehle ki tarah device-id se chalta rehta hai.
+     ══════════════════════════════════════════════════════════════ -->
+<script type="module">
+const FIREBASE_ON = true;          // config bharne ke baad true kar do
+
+const firebaseConfig = {
+  apiKey:            'AIzaSyDiRGj-hlHnjnqRC21LeVikYw_l5MWqA50',
+  authDomain:        'sarrthi-d81d3.firebaseapp.com',
+  projectId:         'sarrthi-d81d3',
+  storageBucket:     'sarrthi-d81d3.firebasestorage.app',
+  messagingSenderId: '242606699113',
+  appId:             '1:242606699113:web:cdc4de0e404693d321e8f8',
+};
+
+// Auth band ho toh ek khali shim rakh dete hain, taaki neeche wale
+// script me har jagah "agar Firebase hai toh" likhna na pade.
+const off = {
+  ready: Promise.resolve(null),
+  idToken: async () => null,
+  uid: () => null,
+  isAnonymous: () => true,
+  displayName: () => null,
+  signInGoogle: async () => {},
+  signOut: async () => {},
+  onChange: () => {},
+  enabled: false,
+};
+
+if (!FIREBASE_ON || firebaseConfig.apiKey === 'REPLACE_ME') {
+  window.RagAuth = off;
+  window.dispatchEvent(new Event('ragauth-ready'));
+} else {
+  try {
+    const { initializeApp } = await import(
+      'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js');
+    const {
+      getAuth, onAuthStateChanged, signInAnonymously, signOut,
+      GoogleAuthProvider, signInWithPopup, linkWithPopup,
+      browserLocalPersistence, setPersistence,
+    } = await import(
+      'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js');
+
+    const app  = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    await setPersistence(auth, browserLocalPersistence);
+
+    const listeners = [];
+    let settled = false;
+    const ready = new Promise((resolve) => {
+      onAuthStateChanged(auth, async (user) => {
+        listeners.forEach((fn) => { try { fn(user); } catch {} });
+        if (settled) return;
+        settled = true;
+        if (user) return resolve(user);
+        // Bina login bhi asli uid mil jaata hai. Baad me Google se
+        // link karne pe YAHI uid rehta hai, toh history saath aati hai.
+        try { resolve((await signInAnonymously(auth)).user); }
+        catch (e) { console.warn('anonymous sign-in failed', e); resolve(null); }
+      });
+    });
+
+    window.RagAuth = {
+      ready,
+      enabled: true,
+      idToken:     async () => auth.currentUser ? auth.currentUser.getIdToken() : null,
+      uid:         () => auth.currentUser?.uid ?? null,
+      isAnonymous: () => auth.currentUser?.isAnonymous ?? true,
+      displayName: () => auth.currentUser?.displayName
+                      || auth.currentUser?.email?.split('@')[0] || null,
+      onChange(fn) { listeners.push(fn); if (settled) fn(auth.currentUser); },
+
+      async signInGoogle() {
+        const provider = new GoogleAuthProvider();
+        const cur = auth.currentUser;
+        // Anonymous account ko UPGRADE karo, naya na banao — tabhi uid
+        // wahi rehta hai aur ab tak ki chat apne aap saath aa jaati hai.
+        if (cur && cur.isAnonymous) {
+          try { return (await linkWithPopup(cur, provider)).user; }
+          catch (e) {
+            if (e.code !== 'auth/credential-already-in-use'
+                && e.code !== 'auth/email-already-in-use') throw e;
+            // Iss Google account ka pehle se apna uid hai (doosre device se).
+            // Usme sign in karo; purani anonymous chat /link se aayegi.
+          }
+        }
+        return (await signInWithPopup(auth, provider)).user;
+      },
+
+      signOut: () => signOut(auth),
+    };
+  } catch (e) {
+    console.warn('Firebase load failed; chat device-id se chalegi', e);
+    window.RagAuth = off;
+  }
+  window.dispatchEvent(new Event('ragauth-ready'));
+}
+</script>
 </head>
 <body>
 
@@ -470,6 +597,25 @@ body {
     <div class="connection-status disconnected" id="connectionStatus">
       <div class="status-dot"></div>
       <span id="statusText">Connecting…</span>
+    </div>
+
+    <!-- SIGN IN. Jaan-boojh ke chhota aur optional rakha hai: bina login
+         bhi chat chalti hai. Mental-health app me login ka darwaza pehla
+         hi darwaza nahi hona chahiye. -->
+    <div class="auth-strip" id="authStrip" hidden>
+      <button class="auth-btn" id="signInBtn">
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+          <path fill="#4285F4" d="M23 12.2c0-.8-.1-1.6-.2-2.3H12v4.4h6.2a5.3 5.3 0 0 1-2.3 3.5v2.9h3.7c2.2-2 3.4-4.9 3.4-8.5z"/>
+          <path fill="#34A853" d="M12 24c3.1 0 5.7-1 7.6-2.8l-3.7-2.9c-1 .7-2.3 1.1-3.9 1.1-3 0-5.6-2-6.5-4.8H1.7v3c1.9 3.8 5.8 6.4 10.3 6.4z"/>
+          <path fill="#FBBC05" d="M5.5 14.6a7.2 7.2 0 0 1 0-4.6v-3H1.7a12 12 0 0 0 0 10.6l3.8-3z"/>
+          <path fill="#EA4335" d="M12 4.8c1.7 0 3.2.6 4.4 1.7l3.3-3.3C17.7 1.2 15.1 0 12 0 7.5 0 3.6 2.6 1.7 6.4l3.8 3C6.4 6.7 9 4.8 12 4.8z"/>
+        </svg>
+        <span>Sign in to keep your chats</span>
+      </button>
+      <div class="auth-who" id="authWho" hidden>
+        <span id="authName"></span>
+        <button class="auth-link" id="signOutBtn">Sign out</button>
+      </div>
     </div>
   </header>
 
@@ -583,6 +729,15 @@ let SPEECH_LANG = 'en-IN';
 let currentClass  = 'auto';
 let currentLang   = 'en';
 
+// ── Tiny storage helpers (private window me throw kar sakta hai) ──
+// Yeh sabse upar hona zaroori hai. Neeche declare tha aur deviceId() isse
+// pehle chal jaata tha — const ka temporal dead zone, matlab poore script
+// ke shuru me hi ReferenceError.
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} }
+};
+
 // Stable per-device id. Pehle server IP se user pehchanta tha, jo do tarah
 // se galat hai: ek wifi pe do log ek hi user ban jaate the (aur ek doosre ki
 // history dekh lete the), aur wifi se mobile data pe jaate hi history gayab.
@@ -597,6 +752,19 @@ function deviceId() {
 }
 const DEVICE_ID = deviceId();
 
+// Har request ke headers ek hi jagah se bante hain. Token mile toh Bearer
+// jaata hai; na mile toh device-id. Server teeno tarah pehchanta hai
+// (Bearer > X-User-Id > IP), aur galat token pe 401 deta hai — chupchaap
+// anonymous pe girta nahi, warna kisi aur ki chat khul sakti thi.
+async function authHeaders() {
+  const h = { 'Content-Type': 'application/json', 'X-User-Id': DEVICE_ID };
+  try {
+    const t = await window.RagAuth?.idToken?.();
+    if (t) h['Authorization'] = 'Bearer ' + t;
+  } catch {}
+  return h;
+}
+
 // Chal rahi conversation. Refresh karne pe bhi wahi chat aage badhti hai,
 // warna har reload pe bot ki memory reset ho jaati.
 let conversationId = store.get('raggita_conversation_id', '');
@@ -604,12 +772,6 @@ let voiceOutOn    = false;
 let ttsAvailable  = false;
 let isListening   = false;
 let currentAudio  = null;
-
-// ── Tiny storage helpers (private window me throw kar sakta hai) ──
-const store = {
-  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, v); } catch {} }
-};
 
 if (typeof marked !== 'undefined') marked.setOptions({ breaks: true, gfm: true });
 
@@ -815,7 +977,7 @@ async function speak(text) {
     try {
       const res = await fetch(`${API_BASE}/tts`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Id': DEVICE_ID },
+        headers: await authHeaders(),
         body: JSON.stringify({ text: stripMarkdown(text), lang: currentLang })
       });
       if (!res.ok) throw new Error('tts failed');
@@ -1007,7 +1169,7 @@ async function handleTalkTurn(text) {
   try {
     const res = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-User-Id': DEVICE_ID },
+      headers: await authHeaders(),
       body: JSON.stringify({ question: text, user_class: currentClass, lang: currentLang,
                              conversation_id: conversationId })
     });
@@ -1092,7 +1254,7 @@ async function sendMessage(fromVoice) {
   try {
     const res = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-User-Id': DEVICE_ID },
+      headers: await authHeaders(),
       body: JSON.stringify({ question, user_class: currentClass, lang: currentLang,
                              conversation_id: conversationId })
     });
@@ -1161,6 +1323,80 @@ applyLang(store.get('raggita_lang', 'en'));
 
 voiceOutOn = store.get('raggita_voice_out', '0') === '1';
 voiceOutBtn.classList.toggle('on', voiceOutOn);
+
+// ══════════════════════════════════════
+// SIGN IN
+// Poori tarah optional. Firebase off ho toh yeh strip dikhti bhi nahi
+// aur app pehle jaisa hi chalta hai.
+// ══════════════════════════════════════
+const authStrip  = document.getElementById('authStrip');
+const signInBtn  = document.getElementById('signInBtn');
+const signOutBtn = document.getElementById('signOutBtn');
+const authWho    = document.getElementById('authWho');
+const authName   = document.getElementById('authName');
+
+function paintAuth() {
+  const A = window.RagAuth;
+  if (!A?.enabled) { authStrip.hidden = true; return; }
+  authStrip.hidden = false;
+  const signedIn = A.uid() && !A.isAnonymous();
+  signInBtn.hidden = signedIn;
+  authWho.hidden   = !signedIn;
+  if (signedIn) authName.textContent = A.displayName() || 'Signed in';
+}
+
+// Sign-in ke baad bina-login wali chat naye account ke neeche le aao.
+// linkWithPopup se uid wahi rehta hai (tab yeh call bekaar hai par
+// harmless). Doosre device wale Google account me sign in hua ho — tab
+// yahi call purani chat bachati hai.
+async function linkOldChats() {
+  try {
+    const res = await fetch(`${API_BASE}/link`, {
+      method: 'POST',
+      headers: await authHeaders(),
+      body: JSON.stringify({ device_id: DEVICE_ID })
+    });
+    if (res.ok) {
+      const d = await res.json();
+      if (d.conversations_moved) console.log('chats linked:', d.conversations_moved);
+    }
+  } catch (e) { console.warn('link skipped', e); }
+}
+
+function wireAuth() {
+  const A = window.RagAuth;
+  paintAuth();
+  if (!A?.enabled) return;
+
+  A.onChange(paintAuth);
+
+  signInBtn.addEventListener('click', async () => {
+    signInBtn.disabled = true;
+    try {
+      await A.signInGoogle();
+      paintAuth();
+      await linkOldChats();
+    } catch (e) {
+      // Popup band kar dena galti nahi hai — uspe error mat dikhao.
+      if (e?.code !== 'auth/popup-closed-by-user'
+          && e?.code !== 'auth/cancelled-popup-request') {
+        console.warn('sign-in failed', e);
+        addBotMessage('Sign-in poora nahi hua. Chat bina sign-in bhi chalti rahegi.', false);
+      }
+    } finally { signInBtn.disabled = false; }
+  });
+
+  signOutBtn.addEventListener('click', async () => {
+    try { await A.signOut(); } catch {}
+    // Sign-out ke baad naya anonymous uid milta hai, toh chat bhi nayi.
+    conversationId = '';
+    store.set('raggita_conversation_id', '');
+    paintAuth();
+  });
+}
+
+if (window.RagAuth) wireAuth();
+else window.addEventListener('ragauth-ready', wireAuth, { once: true });
 
 loadClasses();
 checkConnection();

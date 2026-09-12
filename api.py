@@ -343,7 +343,16 @@ def _generate(question, user_class, lang, uid, conv_id, retrieve) -> ChatRespons
     if summary:
         history_text = (f"Summary of earlier turns: {summary}\n\n" + history_text).strip()
 
-    prompt, meta = analyse(question, user_class, lang, has_history=bool(history_text))
+    # Kitni door baat aa chuki hai. Window me user ke jitne messages hain
+    # utne turns; summary maujood hai matlab window se pehle bhi kaafi baat
+    # hui hai, toh seedha "land" wale pace pe jao.
+    turn = sum(1 for m in history_msgs if m.get("role") == "user")
+    if summary:
+        turn += store.SUMMARISE_EVERY
+
+    prompt, meta = analyse(question, user_class, lang,
+                           has_history=bool(history_text),
+                           turn=turn, history_text=history_text)
 
     variables = {"question": question}
     if "context" in prompt.input_variables:
@@ -351,9 +360,11 @@ def _generate(question, user_class, lang, uid, conv_id, retrieve) -> ChatRespons
     if "history" in prompt.input_variables:
         variables["history"] = history_text
 
-    logger.info("uid=%s conv=%s intent=%s class=%s lang=%s rag=%s hist=%s",
+    logger.info("uid=%s conv=%s intent=%s class=%s lang=%s rag=%s hist=%s "
+                "turn=%s pace=%s",
                 uid[:12], conv_id[:8], meta["intent"], meta["user_class"],
-                meta["lang"], meta["needs_rag"], meta["has_history"])
+                meta["lang"], meta["needs_rag"], meta["has_history"],
+                meta.get("turn"), meta.get("pace"))
 
     answer = (prompt | llm).invoke(variables)
     text = answer.content

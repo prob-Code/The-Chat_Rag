@@ -182,12 +182,18 @@ def _safety_override(lang: str) -> str:
 # INTENT DETECTION
 # ──────────────────────────────────────────────────────────────
 
-_GREETING_RE = re.compile(
-    r"^\s*(h+i+|h+e+y+|h+e+l+o+|hello+|yo|namaste|namaskar|pranam|नमस्ते|नमस्कार|प्रणाम|"
-    r"good\s*(morning|afternoon|evening|night)|gm|gn|"
+_SMALL_TALK = (
+    r"(?:h+i+|h+e+y+|h+e+l+o+|hello+|yo|namaste|namaskar|pranam|नमस्ते|नमस्कार|प्रणाम|"
+    r"good\s*(?:morning|afternoon|evening|night)|gm|gn|"
     r"thanks?|thank\s*you|thx|ty|शुक्रिया|धन्यवाद|ok+|okay|k|hm+|bye+|goodbye|see\s*you|"
     r"kaise\s*ho|kya\s*haal|theek\s*hai|acch?a|कैसे\s*हो|क्या\s*हाल|ठीक\s*है|h)"
-    r"[\s!.,?।]*$",
+)
+
+# Teen tak chhote tokens — "ok thanks", "hi hello", "thank you bye" bhi
+# greeting hain. Pehle sirf ek token match hota tha, toh "ok thanks"
+# support intent ban jaata tha aur bot ek poora reply de deta tha.
+_GREETING_RE = re.compile(
+    r"^\s*" + _SMALL_TALK + r"(?:[\s!.,?।]+" + _SMALL_TALK + r"){0,2}[\s!.,?।]*$",
     re.IGNORECASE,
 )
 
@@ -220,13 +226,106 @@ def detect_intent(text: str) -> str:
     return "support"
 
 
+# ──────────────────────────────────────────────────────────────
+# PACE — baat kisi jagah pohonchni chahiye
+# ──────────────────────────────────────────────────────────────
+# v5 ka sabse bada bug yahi tha: prompt ko pata hi nahi tha ki yeh
+# pehla turn hai ya bara-hwan. Isliye har turn "ek sawaal pooch lo"
+# jaisa behave karta tha aur baat kabhi kisi jagah nahi pohonchti thi.
+# Ek sawaal shuru me dhyaan dena hai; dus sawaal ke baad wahi sawaal
+# taal-matol hai.
+
+_ASSIST_LINE_RE = re.compile(r"^You:\s*(.+)$", re.MULTILINE)
+
+
+def questions_asked(history_text: str) -> int:
+    """Bot ke kitne pichhle replies sawaal pe khatam hue."""
+    n = 0
+    for line in _ASSIST_LINE_RE.findall(history_text or ""):
+        if line.rstrip().endswith("?"):
+            n += 1
+    return n
+
+
+_PACE_OPEN = (
+    "PACE:\n"
+    "This is the beginning. You may end with ONE short question, and only if you "
+    "genuinely need that answer to say anything useful. Never two questions. Never a "
+    "question they have already answered."
+)
+
+_PACE_MIDDLE = (
+    "PACE:\n"
+    "You have already asked them something. Do not ask again this turn unless they "
+    "asked YOU something. Work with what they have already given you, even if it is "
+    "little, and say the one true thing you can say from it."
+)
+
+_PACE_LAND = (
+    "PACE - THIS OUTRANKS EVERY RULE BELOW EXCEPT SAFETY:\n"
+    "This conversation has been going on for a while and they still have nothing to "
+    "hold. Another question now is avoidance, not care.\n"
+    "- Do NOT ask anything. Do not end this reply with a question mark.\n"
+    "- Do NOT name their feeling back to them again - they have heard that already.\n"
+    "- Look at everything they have said and pick the ONE thing that weighs most.\n"
+    "- Say the one thing from the Gita that meets exactly that, in plain words.\n"
+    "- Then one concrete thing for today, built out of their own situation.\n"
+    "- Do not repeat a suggestion you have already made. If they said something did "
+    "not work, say so plainly and offer something different.\n"
+    "- If what they described genuinely cannot be fixed, say that plainly, and name "
+    "the one part of it that can be touched today.\n"
+    "This is the turn where it has to land."
+)
+
+
+def pace_rules(turn: int = 0, asked: int = 0) -> str:
+    """Kitni door baat aa chuki hai, uske hisaab se prompt ka rukh."""
+    if turn >= 3 or asked >= 2:
+        return _PACE_LAND
+    if turn >= 1 or asked >= 1:
+        return _PACE_MIDDLE
+    return _PACE_OPEN
+
+
+_CUE_RE_CACHE = {}
+
+
+def _cue_regex(cue: str):
+    """Cue ko lachila regex banao.
+
+    Seedha substring match bahut bhurbhura tha. Cue "feel low" hai aur banda
+    likhta hai "i feel very low" — beech me "very" aa gaya, substring match
+    fail, class general, aur bot phir sawaal poochne lagta. Yahi wajah thi ki
+    baat kahin pohonchti hi nahi thi.
+
+    Isliye:
+      - har shabd ke aage suffix chalega   (feel -> feeling, feels)
+      - shabdon ke beech do tak extra shabd chalenge  (feel VERY low)
+      - Devanagari me \\b kaam nahi karta, wahan boundary nahi lagti
+    """
+    rx = _CUE_RE_CACHE.get(cue)
+    if rx is not None:
+        return rx
+    parts = [re.escape(p) for p in cue.split() if p]
+    if not parts:
+        rx = re.compile(r"(?!x)x")          # kabhi match nahi karega
+    else:
+        core = r"\w*\s+(?:\S+\s+){0,2}".join(parts)
+        if all(ord(c) < 128 for c in cue):
+            rx = re.compile(r"(?<!\w)" + core + r"\w*", re.IGNORECASE)
+        else:
+            rx = re.compile(core)
+    _CUE_RE_CACHE[cue] = rx
+    return rx
+
+
 def detect_class(text: str) -> str:
-    lowered = (text or "").lower()
+    t = (text or "")
     scores = {}
     for key, cls in CLASSES.items():
         score = 0
         for cue in cls.get("cues", []):
-            if cue in lowered:
+            if _cue_regex(cue).search(t):
                 score += 2 if len(cue) > 12 else 1
         if score:
             scores[key] = score
@@ -250,12 +349,15 @@ repeat advice you have already given, and do not re-introduce yourself:
 """
 
 
-def _render(body: str, lang: str, with_history: bool) -> str:
+def _render(body: str, lang: str, with_history: bool, pace: str = "") -> str:
     """Safety override upar, language rule neeche, body beech me.
 
     with_history False ho toh [[HISTORY]] marker chupchaap hat jaata hai,
-    taaki template me khaali heading na bache.
+    taaki template me khaali heading na bache. [[PACE]] waise hi — pace
+    block transcript se thoda pehle baithta hai, jahan model usse sabse
+    zyada wazan deta hai.
     """
+    body = body.replace("[[PACE]]", (pace + "\n\n") if pace else "")
     body = body.replace("[[HISTORY]]", _HISTORY_BLOCK if with_history else "")
     return (
         _safety_override(lang)
@@ -332,11 +434,12 @@ RULES:
 - Do NOT offer a small step, a breathing exercise, tea, a walk, or a coping suggestion.
   They have not described a problem, so there is nothing to cope with.
 - Do NOT quote the Gita unless they asked about it.
-- If their message is short or unclear, ask one simple, unhurried question about what
-  brought them here. One question, not three.
 - Sound like a person, not a template. Vary how you open.
+- Whether you may ask them anything is decided by the PACE block below, not here.
+  If PACE says not to ask, then respond to what they wrote and stop - a plain,
+  unhurried sentence is a complete reply.
 
-[[HISTORY]]They wrote:
+[[PACE]][[HISTORY]]They wrote:
 {question}
 
 Your reply:"""
@@ -371,7 +474,7 @@ _SUPPORT_TAIL = """Gita verses that may fit this person, already in plain words.
 Additional retrieved context from the Gita:
 {context}
 
-[[HISTORY]]They wrote:
+[[PACE]][[HISTORY]]They wrote:
 {question}
 
 Your reply, 60 to 90 words, warm and plain:"""
@@ -397,16 +500,25 @@ def _support_body(cls_key: str) -> str:
 # ──────────────────────────────────────────────────────────────
 
 def analyse(question: str, user_class: str = "auto", lang: str = DEFAULT_LANG,
-            has_history: bool = False):
+            has_history: bool = False, turn: int = 0, history_text: str = ""):
     """Return (PromptTemplate, meta).
 
-    meta: {"intent", "user_class", "needs_rag", "lang", "has_history"}
+    turn         — iss conversation me user ke pichhle messages ki ginti
+    history_text — format_history() ka transcript, pace nikalne ke liye
+
+    meta: {"intent", "user_class", "needs_rag", "lang", "has_history",
+           "turn", "pace"}
     """
     q = question or ""
     lg = normalise_lang(lang)
     forced = (user_class or "auto").strip().lower()
 
-    def out(body, intent, cls, needs_rag, with_context):
+    asked = questions_asked(history_text)
+    pace = pace_rules(turn, asked)
+    pace_name = ("land" if pace is _PACE_LAND
+                 else "middle" if pace is _PACE_MIDDLE else "open")
+
+    def out(body, intent, cls, needs_rag, with_context, with_pace=True):
         # Off-topic ka jawab pichhli baaton se nahi badalta — wahan history
         # bhejna sirf tokens jalana hai.
         use_hist = has_history and intent != "offtopic"
@@ -416,10 +528,13 @@ def analyse(question: str, user_class: str = "auto", lang: str = DEFAULT_LANG,
         if use_hist:
             variables.append("history")
         return (
-            PromptTemplate(input_variables=variables,
-                           template=_render(body, lg, use_hist)),
+            PromptTemplate(
+                input_variables=variables,
+                template=_render(body, lg, use_hist, pace if with_pace else ""),
+            ),
             {"intent": intent, "user_class": cls, "needs_rag": needs_rag,
-             "lang": lg, "has_history": use_hist},
+             "lang": lg, "has_history": use_hist, "turn": turn,
+             "pace": pace_name if with_pace else "none"},
         )
 
     if forced in CLASSES and forced != "general":
@@ -427,15 +542,30 @@ def analyse(question: str, user_class: str = "auto", lang: str = DEFAULT_LANG,
 
     intent = detect_intent(q)
 
+    # Greeting aur offtopic ko pace se matlab nahi — "hi" ka jawab
+    # landing nahi hota.
     if intent == "greeting":
-        return out(_GREETING_BODY, "greeting", "greeting", False, False)
+        return out(_GREETING_BODY, "greeting", "greeting", False, False,
+                   with_pace=False)
     if intent == "offtopic":
-        return out(_OFFTOPIC_BODY, "offtopic", "offtopic", False, False)
+        return out(_OFFTOPIC_BODY, "offtopic", "offtopic", False, False,
+                   with_pace=False)
     if intent == "study":
-        return out(_STUDY_BODY, "study", "seeking", True, True)
+        return out(_STUDY_BODY, "study", "seeking", True, True, with_pace=False)
 
     cls = detect_class(q)
+
+    # Class ko chipakne do. Koi turn 1 me "I feel hopeless" likhta hai aur
+    # turn 4 me sirf "haan" — us "haan" me koi cue nahi hai, toh purana
+    # detect_class general de deta tha aur bot phir sawaal poochne lagta tha.
+    if cls == "general" and history_text:
+        cls = detect_class(history_text)
+
     if cls == "general":
+        # Do exchange ke baad bhi "hume kuch pata nahi" maan ke baithe
+        # rehna hi bug tha. Yahan tak aaye hain toh kisi wajah se aaye hain.
+        if turn >= 2:
+            return out(_support_body("general"), "support", "general", True, True)
         return out(_GENERAL_BODY, "general", "general", False, False)
 
     return out(_support_body(cls), "support", cls, True, True)

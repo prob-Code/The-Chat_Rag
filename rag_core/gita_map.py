@@ -133,6 +133,12 @@ CLASSES = {
             "udaas", "mann bhari", "dil bhari", "उदास", "मन नहीं", "कुछ अच्छा नहीं",
             "out of bed", "pointless", "worthless", "hate myself", "burden",
             "kuch acha nahi", "mann nahi", "thak gaya", "bekar", "bekaar",
+            # Log aise likhte hain — pehle yeh chhoot rahe the
+            "low", "sad", "depress", "hopeless", "heavy", "exhausted",
+            "dukhi", "rona", "ro raha", "ro rahi", "mann nahi lagta",
+            "kuch karne ka mann", "khali khali", "neend nahi", "bhookh nahi",
+            "energy nahi", "himmat nahi", "giving up", "give up", "haar gaya",
+            "दुखी", "रोना", "थक गया", "हिम्मत नहीं",
         ],
     },
     "anxious": {
@@ -152,6 +158,12 @@ CLASSES = {
             "anxious", "anxiety", "panic", "worried", "worry", "overthink",
             "what if", "exam", "interview", "result", "future", "scared of failing",
             "tension", "ghabra", "dar lag",
+            # Indian student ki asli vocabulary
+            "stress", "pressure", "nervous", "placement", "viva", "semester",
+            "backlog", "deadline", "submission", "presentation", "reject",
+            "bechain", "dimag", "sochta rehta", "sochti rehta", "sochte rehta",
+            "neend nahi aati", "ghar wale", "parents expect", "log kya kahenge",
+            "डर लग", "घबरा", "तनाव", "चिंता",
         ],
     },
     "grief": {
@@ -190,6 +202,8 @@ CLASSES = {
         "cues": [
             "lonely", "alone", "no one", "nobody", "no friends", "isolated",
             "nobody cares", "unseen", "akela", "koi nahi",
+            "akeli", "akele", "baat karne wala", "friends nahi", "dost nahi",
+            "samajhta nahi", "samajhti nahi", "अकेला", "अकेली", "कोई नहीं",
         ],
     },
     "angry": {
@@ -208,6 +222,8 @@ CLASSES = {
         "cues": [
             "angry", "anger", "furious", "hate", "unfair", "betrayed", "cheated",
             "resent", "revenge", "gussa", "dhokha",
+            "irritate", "frustrat", "chid", "chidchid", "naraz",
+            "galat kiya", "गुस्सा", "धोखा", "नाराज",
         ],
     },
     "lost": {
@@ -232,6 +248,9 @@ CLASSES = {
             "already got", "i have nothing", "nothing to show", "falling behind",
             "left behind", "compared to", "ahead of me", "sabke paas",
             "mere paas kuch nahi", "peeche reh",
+            "kuch samajh nahi", "aage kya", "kya karna chahiye", "decide nahi",
+            "direction nahi", "raasta nahi", "goal nahi", "stuck",
+            "क्या करूँ", "समझ नहीं", "रास्ता नहीं",
         ],
     },
     "general": {
