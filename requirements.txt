@@ -18,6 +18,7 @@ langchain-text-splitters>=0.3.0
 
 openai>=1.40.0          # TTS endpoint seedhe isko use karta hai
 faiss-cpu
+boto3                   # DynamoDB — chat history aur per-user quota
 huggingface_hub
 numpy
 

@@ -243,8 +243,20 @@ def _safe(text: str) -> str:
     return (text or "").replace("{", "(").replace("}", ")")
 
 
-def _render(body: str, lang: str) -> str:
-    """Safety override upar, language rule neeche, body beech me."""
+_HISTORY_BLOCK = """Earlier in this conversation (oldest first). Use it for continuity - do not
+repeat advice you have already given, and do not re-introduce yourself:
+{history}
+
+"""
+
+
+def _render(body: str, lang: str, with_history: bool) -> str:
+    """Safety override upar, language rule neeche, body beech me.
+
+    with_history False ho toh [[HISTORY]] marker chupchaap hat jaata hai,
+    taaki template me khaali heading na bache.
+    """
+    body = body.replace("[[HISTORY]]", _HISTORY_BLOCK if with_history else "")
     return (
         _safety_override(lang)
         + "\n\n" + ("-" * 60) + "\n\n"
@@ -264,7 +276,7 @@ RULES:
 - Sound warm and unhurried, not chirpy. No exclamation marks.
 - Vary your wording each time - do not open the same way twice.
 
-They said:
+[[HISTORY]]They said:
 {question}
 
 Your reply:"""
@@ -282,7 +294,7 @@ RULES:
 - Say in one short clause what you are here for, then stop.
 - Never claim to be human. If asked what you are, say plainly that you are an AI companion.
 
-They asked:
+[[HISTORY]]They asked:
 {question}
 
 Your reply:"""
@@ -302,7 +314,7 @@ RULES:
 Context from the Gita:
 {context}
 
-Their question:
+[[HISTORY]]Their question:
 {question}
 
 Your answer:"""
@@ -324,7 +336,7 @@ RULES:
   brought them here. One question, not three.
 - Sound like a person, not a template. Vary how you open.
 
-They wrote:
+[[HISTORY]]They wrote:
 {question}
 
 Your reply:"""
@@ -359,7 +371,7 @@ _SUPPORT_TAIL = """Gita verses that may fit this person, already in plain words.
 Additional retrieved context from the Gita:
 {context}
 
-They wrote:
+[[HISTORY]]They wrote:
 {question}
 
 Your reply, 60 to 90 words, warm and plain:"""
@@ -384,20 +396,30 @@ def _support_body(cls_key: str) -> str:
 # ENTRY POINT
 # ──────────────────────────────────────────────────────────────
 
-def analyse(question: str, user_class: str = "auto", lang: str = DEFAULT_LANG):
+def analyse(question: str, user_class: str = "auto", lang: str = DEFAULT_LANG,
+            has_history: bool = False):
     """Return (PromptTemplate, meta).
 
-    meta: {"intent", "user_class", "needs_rag", "lang"}
+    meta: {"intent", "user_class", "needs_rag", "lang", "has_history"}
     """
     q = question or ""
     lg = normalise_lang(lang)
     forced = (user_class or "auto").strip().lower()
 
     def out(body, intent, cls, needs_rag, with_context):
-        variables = ["context", "question"] if with_context else ["question"]
+        # Off-topic ka jawab pichhli baaton se nahi badalta — wahan history
+        # bhejna sirf tokens jalana hai.
+        use_hist = has_history and intent != "offtopic"
+        variables = ["question"]
+        if with_context:
+            variables.insert(0, "context")
+        if use_hist:
+            variables.append("history")
         return (
-            PromptTemplate(input_variables=variables, template=_render(body, lg)),
-            {"intent": intent, "user_class": cls, "needs_rag": needs_rag, "lang": lg},
+            PromptTemplate(input_variables=variables,
+                           template=_render(body, lg, use_hist)),
+            {"intent": intent, "user_class": cls, "needs_rag": needs_rag,
+             "lang": lg, "has_history": use_hist},
         )
 
     if forced in CLASSES and forced != "general":
@@ -431,3 +453,16 @@ def get_prompt_template(user_class: str = "auto", lang: str = DEFAULT_LANG) -> P
 
 def public_langs() -> list:
     return [{"id": k, "label": v["label"]} for k, v in LANGS.items()]
+
+
+def format_history(messages) -> str:
+    """[{role, text}] -> prompt me daalne layak plain transcript."""
+    if not messages:
+        return ""
+    lines = []
+    for m in messages:
+        who = "Them" if m.get("role") == "user" else "You"
+        text = (m.get("text") or "").strip().replace("\n", " ")
+        if text:
+            lines.append(f"{who}: {text[:400]}")
+    return "\n".join(lines)

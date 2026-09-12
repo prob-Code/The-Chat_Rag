@@ -129,6 +129,8 @@ CLASSES = {
         ),
         "cues": [
             "empty", "numb", "nothing matters", "no energy", "tired all the time",
+            "feel low", "feeling low", "feel down", "feeling down", "feel heavy",
+            "udaas", "mann bhari", "dil bhari", "उदास", "मन नहीं", "कुछ अच्छा नहीं",
             "out of bed", "pointless", "worthless", "hate myself", "burden",
             "kuch acha nahi", "mann nahi", "thak gaya", "bekar", "bekaar",
         ],

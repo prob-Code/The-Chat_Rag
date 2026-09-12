@@ -45,6 +45,8 @@ from rag_core.prompts import (
 )
 from rag_core.gita_map import public_classes
 from rag_core.guard import enforce as guard_enforce
+from rag_core.prompts import format_history
+from rag_core import store
 
 import requests
 import uuid
@@ -93,6 +95,28 @@ def _llm_ping() -> bool:
         except Exception:
             continue
     return False
+
+
+def user_id(request: Request, body_uid: str = "") -> str:
+    """Kaun bol raha hai.
+
+    Abhi: client ek stable device id bhejta hai (X-User-Id header ya body me).
+    Aage: Firebase ID token verify karke uska `sub` yahan se return hoga —
+    baaki poore app ko farq nahi padega, kyunki sab yahi function poochta hai.
+    """
+    # Firebase ka seam. Token abhi verify nahi hota; jab hoga, bas yahan hoga.
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer ") and os.getenv("FIREBASE_PROJECT_ID", "").strip():
+        # TODO: verify_firebase_token(auth[7:]) -> uid
+        pass
+
+    uid = (body_uid or request.headers.get("x-user-id", "")).strip()
+    if uid:
+        return uid[:64]
+
+    # Anonymous fallback — IP se derive karo taaki quota kaam karta rahe
+    from rag_core.guard import client_ip
+    return "anon-" + client_ip(request).replace(":", "-")[:48]
 
 
 def _clamp_top_k(k: int) -> int:
@@ -231,6 +255,10 @@ class ChatRequest(BaseModel):
     user_class: str = Field(default="auto", max_length=32)
     lang: str = Field(default="en", max_length=16,
                       description="Reply language: en, hi (Devanagari), hi-latn (Hinglish)")
+    conversation_id: str = Field(default="", max_length=64,
+                                 description="Blank shuru karne ke liye; server naya id dega")
+    user_id: str = Field(default="", max_length=64,
+                         description="Stable device id. Header X-User-Id bhi chalta hai.")
 
     class Config:
         json_schema_extra = {
@@ -244,6 +272,7 @@ class ChatResponse(BaseModel):
     user_class: str = Field(default="auto")
     lang: str = Field(default="en")
     crisis: bool = Field(default=False)
+    conversation_id: str = Field(default="")
 
 
 class TTSRequest(BaseModel):
@@ -261,33 +290,71 @@ class HealthResponse(BaseModel):
 # Core logic
 # ======================
 
-def _generate(question: str, user_class: str, lang: str, retrieve) -> ChatResponse:
-    """Intent + class decide karo, zaroorat ho tabhi retrieve karo, phir LLM chalao.
+def _summarise(conv_id, uid, summary, messages, lang):
+    """Purani baaton ko ek rolling summary me nichodo.
 
-    `retrieve` ek callable hai jo context string laata hai. Use TABHI bulate hain
-    jab prompt ko sach me Gita context chahiye — greeting aur off-topic pe
-    embedding call aur FAISS search dono bach jaate hain.
+    Har 10 turns pe chalta hai, har message pe nahi — matlab ~10% overhead
+    ke badle prompt ka size hamesha bandha rehta hai, chahe baat kitni bhi
+    lambi ho jaye.
     """
-    prompt, meta = analyse(question, user_class, lang)
+    try:
+        transcript = format_history(messages)
+        if not transcript:
+            return
+        instruction = (
+            "Update a running summary of this conversation for your own future reference.\n\n"
+            "Record only: what the person is dealing with in their own words, what they have "
+            "already tried, and anything that seemed to help.\n\n"
+            "Do NOT record: any diagnosis, any mention of self-harm or suicide, medication, "
+            "or anything you inferred rather than heard them say. Write plainly, under 80 words, "
+            "third person, no advice.\n\n"
+            f"Existing summary:\n{summary or '(none yet)'}\n\n"
+            f"Recent conversation:\n{transcript}\n\n"
+            "Updated summary:"
+        )
+        out = llm.invoke(instruction)
+        text = getattr(out, "content", str(out)).strip()
+        if text:
+            store.update_summary(uid, conv_id, text)
+            logger.info("summary refreshed for conv=%s (%d chars)", conv_id, len(text))
+    except Exception:
+        # Summary optional hai. Fail ho toh chat chalti rahe.
+        logger.exception("summarise failed (non-fatal)")
+
+
+def _generate(question, user_class, lang, uid, conv_id, retrieve) -> ChatResponse:
+    """Memory load karo, prompt banao, LLM chalao, turn save karo."""
+    summary, history_msgs = store.load_memory(uid, conv_id)
+    history_text = format_history(history_msgs)
+    if summary:
+        history_text = (f"Summary of earlier turns: {summary}\n\n" + history_text).strip()
+
+    prompt, meta = analyse(question, user_class, lang, has_history=bool(history_text))
 
     variables = {"question": question}
     if "context" in prompt.input_variables:
         variables["context"] = retrieve() if meta["needs_rag"] else ""
+    if "history" in prompt.input_variables:
+        variables["history"] = history_text
 
-    logger.info("intent=%s class=%s lang=%s rag=%s",
-                meta["intent"], meta["user_class"], meta["lang"], meta["needs_rag"])
+    logger.info("uid=%s conv=%s intent=%s class=%s lang=%s rag=%s hist=%s",
+                uid[:12], conv_id[:8], meta["intent"], meta["user_class"],
+                meta["lang"], meta["needs_rag"], meta["has_history"])
 
-    chain = prompt | llm
-    answer = chain.invoke(variables)
-    return ChatResponse(answer=answer.content, sources=[],
-                        user_class=meta["user_class"], lang=meta["lang"])
+    answer = (prompt | llm).invoke(variables)
+    text = answer.content
+
+    turns = store.save_turn(uid, conv_id, question, text,
+                            user_class=meta["user_class"], lang=meta["lang"])
+
+    if turns and turns % store.SUMMARISE_EVERY == 0:
+        _, recent = store.load_memory(uid, conv_id, turns=store.SUMMARISE_EVERY * 2)
+        _summarise(conv_id, uid, summary, recent, meta["lang"])
+
+    return ChatResponse(answer=text, sources=[], user_class=meta["user_class"],
+                        lang=meta["lang"], conversation_id=conv_id)
 
 
-# Errors ko chhupana band. Pehle har 500 ek hi generic line deta tha, jisse
-# har baar CloudWatch khodna padta tha aur guess karna padta tha. Ab:
-#   - poora traceback ek short error id ke saath log hota hai
-#   - DEBUG_ERRORS=true pe asli exception response me bhi aata hai
-# Public launch se pehle DEBUG_ERRORS=false kar dena.
 def _debug_errors() -> bool:
     return os.getenv("DEBUG_ERRORS", "true").strip().lower() in ("1", "true", "yes", "y")
 
@@ -350,7 +417,8 @@ def health_check():
 
 @app.get("/classes")
 def list_classes():
-    return {"classes": public_classes(), "langs": public_langs(), "tts_enabled": _tts_enabled()}
+    return {"classes": public_classes(), "langs": public_langs(),
+            "tts_enabled": _tts_enabled(), "history_enabled": store.enabled()}
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -364,21 +432,37 @@ def chat_endpoint(payload: ChatRequest, request: Request):
 
     # ORDER MATTERS: crisis check sabse pehle.
     # Yeh free hai (koi LLM call nahi), aur rate limit isse kabhi nahi rokta.
+    uid = user_id(request, payload.user_id)
+    conv_id = payload.conversation_id or store.new_conversation_id()
+
     crisis = is_crisis(payload.question)
     if crisis:
         logger.info("Crisis guard triggered; returning helpline response.")
+        # Event likhte hain, text nahi — guard chala yeh pata hona chahiye,
+        # par kisi ki sabse buri raat ka record rakhna zaroori nahi.
+        store.save_turn(uid, conv_id, payload.question, "",
+                        user_class="crisis", lang=normalise_lang(payload.lang), crisis=True)
         return ChatResponse(answer=crisis_reply(payload.lang), sources=[],
                             user_class="crisis", lang=normalise_lang(payload.lang),
-                            crisis=True)
+                            crisis=True, conversation_id=conv_id)
 
     guard_enforce(request, is_crisis_message=False)
+
+    allowed, used = store.check_quota(uid)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="You have reached today's limit. I'll be here tomorrow.",
+            headers={"Retry-After": "3600"},
+        )
 
     try:
         def retrieve():
             docs = retriever.invoke(payload.question)
             return _truncate_context("\n\n".join([d.page_content for d in docs]))
 
-        return _generate(payload.question, payload.user_class, payload.lang, retrieve)
+        return _generate(payload.question, payload.user_class, payload.lang,
+                         uid, conv_id, retrieve)
     except HTTPException:
         raise
     except Exception as e:
@@ -400,11 +484,14 @@ def chat_fast_endpoint(payload: ChatRequest, request: Request):
             detail="Models are not loaded yet. Please try again in a moment."
         )
 
+    uid = user_id(request, payload.user_id)
+    conv_id = payload.conversation_id or store.new_conversation_id()
+
     if is_crisis(payload.question):
         logger.info("Crisis guard triggered; returning helpline response.")
         return ChatResponse(answer=crisis_reply(payload.lang), sources=[],
                             user_class="crisis", lang=normalise_lang(payload.lang),
-                            crisis=True)
+                            crisis=True, conversation_id=conv_id)
 
     guard_enforce(request, is_crisis_message=False)
 
@@ -413,7 +500,8 @@ def chat_fast_endpoint(payload: ChatRequest, request: Request):
             k = int(os.getenv("FAST_TOP_K", "3"))
             return _docs_to_context(_retrieve_docs_faiss(payload.question, k=k))
 
-        return _generate(payload.question, payload.user_class, payload.lang, retrieve)
+        return _generate(payload.question, payload.user_class, payload.lang,
+                         uid, conv_id, retrieve)
     except HTTPException:
         raise
     except Exception as e:
@@ -506,6 +594,43 @@ async def chat_stream_endpoint(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ======================
+# Conversations
+# ======================
+
+@app.get("/conversations")
+def list_conversations_endpoint(request: Request, user_id_q: str = ""):
+    """Iss user ki chats, nayi pehle."""
+    uid = user_id(request, user_id_q)
+    return {"user_id": uid, "conversations": store.list_conversations(uid)}
+
+
+@app.get("/conversations/{conversation_id}")
+def get_conversation_endpoint(conversation_id: str, request: Request, limit: int = 100):
+    """Ek chat ke messages, purane se naye."""
+    return {
+        "conversation_id": conversation_id,
+        "messages": store.get_messages(conversation_id, limit=min(limit, 200)),
+    }
+
+
+@app.delete("/conversations/{conversation_id}")
+def delete_conversation_endpoint(conversation_id: str, request: Request, user_id_q: str = ""):
+    uid = user_id(request, user_id_q)
+    deleted = store.delete_conversation(uid, conversation_id)
+    return {"deleted_messages": deleted, "conversation_id": conversation_id}
+
+
+@app.delete("/me")
+def delete_me_endpoint(request: Request, user_id_q: str = ""):
+    """Sab kuch mita do. DPDP ke under yeh optional nahi hai — aur isse
+    sach me delete hona chahiye, chhupana nahi."""
+    uid = user_id(request, user_id_q)
+    result = store.delete_user(uid)
+    logger.info("erased all data for uid=%s: %s", uid[:12], result)
+    return {"user_id": uid, "erased": result}
 
 
 # ======================
@@ -649,6 +774,18 @@ def diag_endpoint(token: str = ""):
             report["config"][key] = f"set ({len(val)} chars)" if val else "MISSING"
         else:
             report["config"][key] = val or "(default)"
+
+    def _store():
+        if not store.enabled():
+            return {"enabled": False, "note": "DynamoDB unreachable or table missing"}
+        uid = "diag-selftest"
+        cid = store.new_conversation_id()
+        store.save_turn(uid, cid, "diag ping", "diag pong")
+        _sum, msgs = store.load_memory(uid, cid)
+        out = {"enabled": True, "round_trip_messages": len(msgs)}
+        store.delete_conversation(uid, cid)
+        return out
+    check("storage", _store)
 
     check("startup", lambda: {
         "embedding_model": embedding_model is not None,
