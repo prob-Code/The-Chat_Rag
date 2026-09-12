@@ -582,6 +582,24 @@ let SPEECH_LANG = 'en-IN';
 
 let currentClass  = 'auto';
 let currentLang   = 'en';
+
+// Stable per-device id. Pehle server IP se user pehchanta tha, jo do tarah
+// se galat hai: ek wifi pe do log ek hi user ban jaate the (aur ek doosre ki
+// history dekh lete the), aur wifi se mobile data pe jaate hi history gayab.
+// Yeh id ek hi baar banti hai aur browser me rehti hai.
+function deviceId() {
+  let id = store.get('raggita_device_id', '');
+  if (!id) {
+    id = (crypto.randomUUID ? crypto.randomUUID() : 'dev-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10));
+    store.set('raggita_device_id', id);
+  }
+  return id;
+}
+const DEVICE_ID = deviceId();
+
+// Chal rahi conversation. Refresh karne pe bhi wahi chat aage badhti hai,
+// warna har reload pe bot ki memory reset ho jaati.
+let conversationId = store.get('raggita_conversation_id', '');
 let voiceOutOn    = false;
 let ttsAvailable  = false;
 let isListening   = false;
@@ -797,7 +815,7 @@ async function speak(text) {
     try {
       const res = await fetch(`${API_BASE}/tts`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-User-Id': DEVICE_ID },
         body: JSON.stringify({ text: stripMarkdown(text), lang: currentLang })
       });
       if (!res.ok) throw new Error('tts failed');
@@ -989,13 +1007,19 @@ async function handleTalkTurn(text) {
   try {
     const res = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: text, user_class: currentClass, lang: currentLang })
+      headers: { 'Content-Type': 'application/json', 'X-User-Id': DEVICE_ID },
+      body: JSON.stringify({ question: text, user_class: currentClass, lang: currentLang,
+                             conversation_id: conversationId })
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const data = await res.json();
     if (!talkMode) return;   // beech me band kar diya
+
+    if (data.conversation_id && data.conversation_id !== conversationId) {
+      conversationId = data.conversation_id;
+      store.set('raggita_conversation_id', conversationId);
+    }
 
     addBotMessage(data.answer, data.crisis);
     setConnected(true);
@@ -1068,8 +1092,9 @@ async function sendMessage(fromVoice) {
   try {
     const res = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, user_class: currentClass, lang: currentLang })
+      headers: { 'Content-Type': 'application/json', 'X-User-Id': DEVICE_ID },
+      body: JSON.stringify({ question, user_class: currentClass, lang: currentLang,
+                             conversation_id: conversationId })
     });
 
     if (!res.ok) {
@@ -1078,6 +1103,12 @@ async function sendMessage(fromVoice) {
     }
 
     const data = await res.json();
+
+    if (data.conversation_id && data.conversation_id !== conversationId) {
+      conversationId = data.conversation_id;
+      store.set('raggita_conversation_id', conversationId);
+    }
+
     hideTyping();
     addBotMessage(data.answer, data.crisis);
     setConnected(true);
