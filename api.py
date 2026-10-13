@@ -216,6 +216,49 @@ def _docs_to_context(docs) -> str:
     return _truncate_context("\n\n".join([d.page_content for d in docs]))
 
 
+def _load_embeddings(use_remote: bool, hf_token: str):
+    """Load query embeddings without leaving a broken remote client in place.
+
+    Hugging Face's inference router now requires authentication for feature
+    extraction. Constructing ``HuggingFaceEndpointEmbeddings`` does not
+    validate the token, so an unhealthy client used to make every real question
+    fail later with a 401 during FAISS retrieval. Prefer the local model when
+    no token is configured; it produces the same vectors as the FAISS index.
+    """
+    model_name = "sentence-transformers/all-MiniLM-L6-v2"
+
+    if use_remote and HuggingFaceEndpointEmbeddings is not None and hf_token:
+        logger.info("Using HuggingFace Inference API embeddings (authenticated)")
+        return HuggingFaceEndpointEmbeddings(
+            model=model_name,
+            huggingfacehub_api_token=hf_token,
+        )
+
+    if use_remote and not hf_token:
+        logger.warning(
+            "USE_REMOTE_EMBEDDINGS is enabled but HF_TOKEN is missing; "
+            "using local embeddings instead of a remote client that would fail with 401."
+        )
+
+    try:
+        logger.info("Using local HuggingFace embeddings (%s)", model_name)
+        return HuggingFaceEmbeddings(model_name=model_name)
+    except ImportError as exc:
+        if HuggingFaceEndpointEmbeddings is not None and hf_token:
+            logger.warning(
+                "Local sentence-transformers is unavailable; falling back to "
+                "authenticated HuggingFace embeddings."
+            )
+            return HuggingFaceEndpointEmbeddings(
+                model=model_name,
+                huggingfacehub_api_token=hf_token,
+            )
+        raise RuntimeError(
+            "Embeddings are unavailable. Install sentence-transformers or set "
+            "HF_TOKEN for authenticated HuggingFace embeddings."
+        ) from exc
+
+
 def _sse(event, data) -> bytes:
     payload = json.dumps(data, ensure_ascii=False)
     if event:
@@ -235,34 +278,7 @@ async def lifespan(app: FastAPI):
         use_remote = os.getenv("USE_REMOTE_EMBEDDINGS", "true").strip().lower() in ("1", "true", "yes", "y")
         hf_token = os.getenv("HF_TOKEN", os.getenv("HUGGINGFACE_HUB_TOKEN", "")).strip()
 
-        if use_remote and HuggingFaceEndpointEmbeddings is not None:
-            logger.info("Using HuggingFace Inference API embeddings (low memory)")
-            endpoint_kwargs = {"model": "sentence-transformers/all-MiniLM-L6-v2"}
-            if hf_token:
-                endpoint_kwargs["huggingfacehub_api_token"] = hf_token
-            embedding_model = HuggingFaceEndpointEmbeddings(**endpoint_kwargs)
-        else:
-            # sentence-transformers ab requirements.txt me nahi hai (torch ~2.5GB
-            # laata tha aur Render ka build maar raha tha). Agar koi local
-            # embeddings maange bina usse install kiye, toh crash karne ke bajaye
-            # remote pe gir jao — app chalta rehna chahiye.
-            try:
-                logger.info("Using local HuggingFace embeddings (all-MiniLM-L6-v2)")
-                embedding_model = HuggingFaceEmbeddings(
-                    model_name="sentence-transformers/all-MiniLM-L6-v2"
-                )
-            except ImportError:
-                logger.warning(
-                    "sentence-transformers not installed; falling back to the "
-                    "HuggingFace Inference API. Install it, or set "
-                    "USE_REMOTE_EMBEDDINGS=true to silence this."
-                )
-                if HuggingFaceEndpointEmbeddings is None:
-                    raise
-                endpoint_kwargs = {"model": "sentence-transformers/all-MiniLM-L6-v2"}
-                if hf_token:
-                    endpoint_kwargs["huggingfacehub_api_token"] = hf_token
-                embedding_model = HuggingFaceEndpointEmbeddings(**endpoint_kwargs)
+        embedding_model = _load_embeddings(use_remote, hf_token)
 
         logger.info("Loading FAISS vector database...")
         db = FAISS.load_local(

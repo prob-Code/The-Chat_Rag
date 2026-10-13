@@ -3,6 +3,7 @@ LightRAG Configuration Settings
 """
 import os
 import tempfile
+import logging
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Sequence, Any
@@ -14,6 +15,31 @@ load_dotenv()
 # Resolve paths relative to the project root (so scripts work from any CWD)
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_BASE_PATH = _PROJECT_ROOT / "lightrag_storage"
+_LOGGER = logging.getLogger(__name__)
+
+
+def _effective_llm_model(model: str, base_url: str) -> str:
+    """Keep a known retired Groq model from taking the whole chat endpoint down.
+
+    Groq removed ``llama-3.1-8b-instant`` from the model catalog. Existing
+    deployments may still carry that value in their environment, so use the
+    currently available OpenAI open-weight model unless an explicit fallback is
+    configured. Other custom model names are left untouched.
+    """
+    configured = (model or "").strip()
+    if (
+        configured == "llama-3.1-8b-instant"
+        and "api.groq.com" in (base_url or "").lower()
+    ):
+        fallback = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-120b").strip()
+        if fallback:
+            _LOGGER.warning(
+                "Configured Groq model %s is no longer available; using %s.",
+                configured,
+                fallback,
+            )
+            return fallback
+    return configured
 
 
 @dataclass
@@ -122,8 +148,9 @@ def get_llm(
         )
     else:
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(
-            model=config.llm_model,
+        model = _effective_llm_model(config.llm_model, config.openai_api_base)
+        llm_kwargs = dict(
+            model=model,
             base_url=config.openai_api_base,
             api_key=config.openai_api_key,
             temperature=temp,
@@ -135,6 +162,18 @@ def get_llm(
             streaming=streaming,
             callbacks=list(callbacks) if callbacks else None,
         )
+        # Groq's gpt-oss models spend part of max_tokens on hidden reasoning.
+        # With the old default budget that could leave an otherwise successful
+        # request with an empty visible answer. Low reasoning keeps replies
+        # concise while preserving enough budget for the actual response.
+        if (
+            "api.groq.com" in (config.openai_api_base or "").lower()
+            and model.startswith("openai/gpt-oss")
+        ):
+            llm_kwargs["reasoning_effort"] = os.getenv(
+                "GROQ_REASONING_EFFORT", "low"
+            ).strip() or "low"
+        return ChatOpenAI(**llm_kwargs)
 
 
 # Default configuration instance
