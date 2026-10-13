@@ -117,11 +117,10 @@ CLASSES = {
         "tone": (
             "They are flat, heavy, or empty. Energy is the scarce resource, not insight. "
             "Match their register - quiet and level, never bright or motivating. "
-            "Your one suggestion must be almost embarrassingly small: something that takes "
-            "under a minute, needs no decision and no leaving the room. "
-            "Build it out of the specific thing they described. "
-            "Do not fall back on a stock suggestion - if it would fit any stranger equally "
-            "well, it is the wrong one."
+            "If they ask what to do, give one suggestion that is almost embarrassingly small: "
+            "something that takes under a minute, needs no decision and no leaving the room. "
+            "Build it out of the specific thing they described. Do not force a suggestion when "
+            "they only want an answer or to be heard."
         ),
         "avoid": (
             "Do not encourage them to be strong, to fight, or to push through. "
@@ -173,7 +172,7 @@ CLASSES = {
         "tone": (
             "Someone or something is gone. Stay with them in it. "
             "Grief is not a problem to be solved, so do not solve it. "
-            "Your small step should be an act of remembering, not of moving on."
+            "If they ask for a step, make it an act of remembering, not of moving on."
         ),
         "avoid": (
             "Never say they should not grieve, that the soul is eternal so this does not matter, "
@@ -192,8 +191,8 @@ CLASSES = {
         "anchors": ["9.22", "12.13", "6.32"],
         "tone": (
             "They feel unseen or alone. Do not perform closeness or claim to be their friend. "
-            "Acknowledge the isolation plainly, then point at one small real-world thread - "
-            "a message they could send, a person they could sit near."
+            "Acknowledge the isolation plainly. If they ask what to do, point at one small "
+            "real-world thread - a message they could send, a person they could sit near."
         ),
         "avoid": (
             "Do not say you are always here for them or imply you can replace human contact. "
@@ -233,7 +232,7 @@ CLASSES = {
         "tone": (
             "They cannot see a path, or they are measuring themselves against other people. "
             "This is Arjuna's actual situation at the start of the Gita, so treat it as a normal place to be, not a failure. "
-            "Point at their own next step, not at a five-year plan."
+            "If they ask what to do, point at their own next step, not at a five-year plan."
         ),
         "avoid": (
             "Do not tell them to follow their passion or that everything happens for a reason. "
