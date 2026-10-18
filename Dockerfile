@@ -46,6 +46,9 @@ COPY gita_vector_db/ ./gita_vector_db/
 # ── Lambda Web Adapter config ───────────────────────────────
 # Yeh env vars Lambda ke bahar bilkul ignore ho jaate hain.
 ENV AWS_LWA_PORT=8000
+ARG RAGGITA_BUILD_SHA=local
+ENV RAGGITA_BUILD_SHA=$RAGGITA_BUILD_SHA
+ENV APP_VERSION=2.2.0
 # Readiness /health pe hai: woh models load hone tak 503 deta hai,
 # toh adapter tab tak intezaar karega jab tak FAISS taiyar na ho.
 ENV AWS_LWA_READINESS_CHECK_PATH=/health

@@ -60,6 +60,9 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
+APP_VERSION = os.getenv("APP_VERSION", "2.2.0")
+BUILD_SHA = os.getenv("RAGGITA_BUILD_SHA", "local")
+
 # Global references
 embedding_model = None
 db = None
@@ -350,11 +353,15 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
-    sources: list = Field(default=[])
+    sources: list = Field(default_factory=list)
     user_class: str = Field(default="auto")
     lang: str = Field(default="en")
     crisis: bool = Field(default=False)
     conversation_id: str = Field(default="")
+    intent: str = Field(default="general")
+    used_rag: bool = Field(default=False)
+    model: str = Field(default="")
+    build_sha: str = Field(default=BUILD_SHA)
 
 
 class TTSRequest(BaseModel):
@@ -365,7 +372,8 @@ class TTSRequest(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     message: str
-    version: str = "2.1.0"
+    version: str = APP_VERSION
+    build_sha: str = BUILD_SHA
 
 
 # ======================
@@ -404,6 +412,68 @@ def _summarise(conv_id, uid, summary, messages, lang):
         logger.exception("summarise failed (non-fatal)")
 
 
+def _response_text(result) -> str:
+    """Normalise LangChain/OpenAI responses into plain text."""
+    content = getattr(result, "content", result)
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                value = item.get("text") or item.get("content") or ""
+            else:
+                value = str(item)
+            if value:
+                parts.append(value)
+        content = "".join(parts)
+    return str(content or "").strip()
+
+
+def _needs_answer_repair(text: str) -> bool:
+    """Catch the common non-answer pattern from older/weak model responses."""
+    lowered = (text or "").strip().lower()
+    if len(lowered) < 8:
+        return True
+    if lowered.endswith("?"):
+        return True
+    return any(phrase in lowered for phrase in (
+        "what made you think",
+        "tell me more",
+        "would you like to",
+        "can you tell me more",
+        "how does that make you feel",
+    ))
+
+
+def _repair_answer(question: str, draft: str, context: str, lang: str) -> str:
+    """Ask the same LLM for a direct answer when it only reflects the user."""
+    repair_prompt = f"""Rewrite the draft below into a direct, useful answer.
+
+Question: {question}
+Draft: {draft}
+Relevant context: {context or '(none)'}
+Language: {lang}
+
+Rules:
+- Answer the question first.
+- Do not ask anything back.
+- Do not end with a question mark.
+- If the question is broad, answer its most natural meaning.
+- Keep it concise and do not mention this rewrite instruction.
+"""
+    try:
+        repaired = _response_text(llm.invoke(repair_prompt))
+        return repaired or draft
+    except Exception:
+        logger.exception("answer repair failed; keeping original draft")
+        return draft
+
+
+def _configured_model_name() -> str:
+    if os.getenv("USE_BYTEZ", "false").strip().lower() in ("1", "true", "yes", "y"):
+        return os.getenv("BYTEZ_MODEL", "openai/gpt-5.1")
+    return os.getenv("LLM_MODEL", "gpt-4o-mini")
+
+
 def _generate(question, user_class, lang, uid, conv_id, retrieve) -> ChatResponse:
     """Memory load karo, prompt banao, LLM chalao, turn save karo."""
     summary, history_msgs = store.load_memory(uid, conv_id)
@@ -423,8 +493,17 @@ def _generate(question, user_class, lang, uid, conv_id, retrieve) -> ChatRespons
                            turn=turn, history_text=history_text)
 
     variables = {"question": question}
+    context = ""
     if "context" in prompt.input_variables:
-        variables["context"] = retrieve() if meta["needs_rag"] else ""
+        if meta["needs_rag"]:
+            try:
+                context = retrieve()
+            except Exception as exc:
+                # Retrieval is helpful, but it must not turn every question into
+                # a 500 when Hugging Face embeddings are temporarily unavailable.
+                logger.warning("retrieval failed; continuing without context: %s", exc)
+                context = "No retrieved context is available. Answer from general knowledge and be honest about limits."
+        variables["context"] = context
     if "history" in prompt.input_variables:
         variables["history"] = history_text
 
@@ -435,7 +514,9 @@ def _generate(question, user_class, lang, uid, conv_id, retrieve) -> ChatRespons
                 meta.get("turn"), meta.get("pace"))
 
     answer = (prompt | llm).invoke(variables)
-    text = answer.content
+    text = _response_text(answer)
+    if _needs_answer_repair(text):
+        text = _repair_answer(question, text, context, meta["lang"])
 
     # Layer 2 chal gaya? Regex chooka par LLM ne override maan liya.
     # Do cheezein zaroori hain:
@@ -461,7 +542,10 @@ def _generate(question, user_class, lang, uid, conv_id, retrieve) -> ChatRespons
 
     return ChatResponse(answer=text, sources=[], crisis=layer2,
                         user_class="crisis" if layer2 else meta["user_class"],
-                        lang=meta["lang"], conversation_id=conv_id)
+                        lang=meta["lang"], conversation_id=conv_id,
+                        intent="crisis" if layer2 else meta["intent"],
+                        used_rag=bool(meta["needs_rag"]),
+                        model=_configured_model_name(), build_sha=BUILD_SHA)
 
 
 def _debug_errors() -> bool:
@@ -511,7 +595,7 @@ def root():
 
 @app.get("/api", response_model=HealthResponse)
 def api_info():
-    return HealthResponse(status="ok", message="RagGita API is running. Visit /docs.", version="2.1.0")
+    return HealthResponse(status="ok", message="RagGita API is running. Visit /docs.")
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -521,7 +605,7 @@ def health_check():
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Models not loaded"
         )
-    return HealthResponse(status="healthy", message="All systems operational", version="2.1.0")
+    return HealthResponse(status="healthy", message="All systems operational")
 
 
 @app.get("/classes")
@@ -649,14 +733,19 @@ async def chat_stream_endpoint(
     k = _clamp_top_k(k)
 
     async def event_generator():
-        yield _sse("meta", {"status": "starting", "k": k})
+        yield _sse("meta", {"status": "starting", "k": k, "build_sha": BUILD_SHA})
 
-        try:
-            docs = await asyncio.to_thread(_retrieve_docs_faiss, question, k)
-            context = _docs_to_context(docs)
-        except Exception as e:
-            yield _sse("error", {"message": f"retrieval_failed: {str(e)}"})
-            return
+        stream_prompt, stream_meta = analyse(question, user_class, lang)
+        context = ""
+        if stream_meta["needs_rag"]:
+            try:
+                docs = await asyncio.to_thread(_retrieve_docs_faiss, question, k)
+                context = _docs_to_context(docs)
+            except Exception as e:
+                # A temporary embedding outage should not prevent the LLM from
+                # answering a question without citations.
+                logger.warning("stream retrieval failed; continuing without context: %s", e)
+                context = "No retrieved context is available. Answer from general knowledge and be honest about limits."
 
         handler = TokenQueueCallbackHandler()
         config = LightRAGConfig()
@@ -667,7 +756,6 @@ async def chat_stream_endpoint(
             })
             return
 
-        stream_prompt, _meta = analyse(question, user_class, lang)
         stream_llm = get_llm(config, streaming=True, callbacks=[handler])
         stream_chain = stream_prompt | stream_llm
 

@@ -18,6 +18,7 @@ env:
   AWS_REGION: ap-south-1
   ECR_REPO: raggita
   FUNCTION_NAME: raggita
+  PUBLIC_LAMBDA_URL: https://lht7s7xvklyxrd46xwgi22x23i0ofhyn.lambda-url.ap-south-1.on.aws
 
 jobs:
   deploy:
@@ -44,6 +45,18 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Verify AWS target and Lambda function
+        run: |
+          aws sts get-caller-identity --region "$AWS_REGION"
+          if ! aws lambda get-function \
+            --function-name "$FUNCTION_NAME" \
+            --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "::error::Lambda function '$FUNCTION_NAME' was not found in the configured AWS account/region."
+            echo "The image must not be reported as a successful deployment until this is corrected."
+            exit 1
+          fi
+          echo "Lambda target exists: $FUNCTION_NAME ($AWS_REGION)"
+
       - name: Create ECR repository if it does not exist
         run: |
           aws ecr describe-repositories \
@@ -64,77 +77,100 @@ jobs:
         run: |
           IMAGE="$REGISTRY/$ECR_REPO:$GITHUB_SHA"
           LATEST="$REGISTRY/$ECR_REPO:latest"
-          docker build --platform linux/amd64 -t "$IMAGE" -t "$LATEST" .
+          docker build --platform linux/amd64 \
+            --build-arg RAGGITA_BUILD_SHA="$GITHUB_SHA" \
+            -t "$IMAGE" -t "$LATEST" .
           docker push "$IMAGE"
           docker push "$LATEST"
           echo "IMAGE_URI=$IMAGE" >> "$GITHUB_ENV"
           echo "Pushed: $IMAGE"
 
-      - name: Update Lambda function if it already exists
+      - name: Update Lambda function
         run: |
-          if aws lambda get-function \
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --image-uri "$IMAGE_URI" \
+            --region "$AWS_REGION" >/dev/null
+          aws lambda wait function-updated \
+            --function-name "$FUNCTION_NAME" \
+            --region "$AWS_REGION"
+          echo "Lambda image updated: $IMAGE_URI"
+
+          # Preserve existing variables (Firebase, DynamoDB, etc.) while
+          # enforcing the authenticated remote embedding settings and build id.
+          CURRENT_ENV=$(aws lambda get-function-configuration \
+            --function-name "$FUNCTION_NAME" \
+            --region "$AWS_REGION" \
+            --query 'Environment.Variables' \
+            --output json)
+          if [ "$CURRENT_ENV" = "null" ]; then CURRENT_ENV='{}'; fi
+          UPDATED_ENV=$(printf '%s' "$CURRENT_ENV" | jq -c \
+            --arg openai_key "${OPENAI_API_KEY:-}" \
+            --arg hf_token "$HF_TOKEN" \
+            --arg build_sha "$GITHUB_SHA" \
+            '. + {USE_REMOTE_EMBEDDINGS:"true",HF_TOKEN:$hf_token,RAGGITA_BUILD_SHA:$build_sha} | if $openai_key != "" then . + {OPENAI_API_KEY:$openai_key,OPENAI_API_BASE:"https://api.openai.com/v1",LLM_MODEL:"gpt-4o-mini"} else . end')
+          aws lambda update-function-configuration \
+            --function-name "$FUNCTION_NAME" \
+            --environment "{\"Variables\":$UPDATED_ENV}" \
+            --region "$AWS_REGION" >/dev/null
+          aws lambda wait function-updated \
+            --function-name "$FUNCTION_NAME" \
+            --region "$AWS_REGION"
+
+          if [ -n "${OPENAI_API_KEY:-}" ]; then
+            echo "Updated Lambda LLM configuration from OPENAI_API_KEY secret."
+          else
+            echo "OPENAI_API_KEY secret not set; preserved the existing Lambda value."
+          fi
+
+          if aws lambda get-function-url-config \
             --function-name "$FUNCTION_NAME" \
             --region "$AWS_REGION" >/dev/null 2>&1; then
-            aws lambda update-function-code \
+            aws lambda update-function-url-config \
               --function-name "$FUNCTION_NAME" \
-              --image-uri "$IMAGE_URI" \
+              --auth-type NONE \
+              --invoke-mode RESPONSE_STREAM \
               --region "$AWS_REGION" >/dev/null
-            aws lambda wait function-updated \
-              --function-name "$FUNCTION_NAME" \
-              --region "$AWS_REGION"
-            echo "Lambda function updated."
-
-            # Preserve existing variables (Firebase, DynamoDB, etc.) while
-            # enforcing the authenticated remote embedding settings.
-            CURRENT_ENV=$(aws lambda get-function-configuration \
-              --function-name "$FUNCTION_NAME" \
-              --region "$AWS_REGION" \
-              --query 'Environment.Variables' \
-              --output json)
-            if [ "$CURRENT_ENV" = "null" ]; then CURRENT_ENV='{}'; fi
-            UPDATED_ENV=$(printf '%s' "$CURRENT_ENV" | jq -c \
-              --arg openai_key "${OPENAI_API_KEY:-}" \
-              --arg hf_token "$HF_TOKEN" \
-              '. + {USE_REMOTE_EMBEDDINGS:"true",HF_TOKEN:$hf_token} | if $openai_key != "" then . + {OPENAI_API_KEY:$openai_key,OPENAI_API_BASE:"https://api.openai.com/v1",LLM_MODEL:"gpt-4o-mini"} else . end')
-            aws lambda update-function-configuration \
-              --function-name "$FUNCTION_NAME" \
-              --environment "{\"Variables\":$UPDATED_ENV}" \
-              --region "$AWS_REGION" >/dev/null
-
-            if [ -n "${OPENAI_API_KEY:-}" ]; then
-              echo "Updated Lambda LLM configuration from OPENAI_API_KEY secret."
-            else
-              echo "OPENAI_API_KEY secret not set; preserved the existing Lambda value."
-            fi
-
-            if aws lambda get-function-url-config \
-              --function-name "$FUNCTION_NAME" \
-              --region "$AWS_REGION" >/dev/null 2>&1; then
-              aws lambda update-function-url-config \
-                --function-name "$FUNCTION_NAME" \
-                --auth-type NONE \
-                --invoke-mode RESPONSE_STREAM \
-                --region "$AWS_REGION" >/dev/null
-            fi
           else
-            echo "-------------------------------------------------------"
-            echo "Lambda function not created yet. Image is ready."
-            echo ""
-            echo "Console: Lambda > Create function > Container image"
-            echo "Image URI:"
-            echo ""
-            echo "  $IMAGE_URI"
-            echo ""
-            echo "After that, every push updates the function automatically."
-            echo "-------------------------------------------------------"
+            echo "::error::Lambda Function URL is not configured for '$FUNCTION_NAME'."
+            exit 1
           fi
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: Verify deployed image and build
+        run: |
+          DEPLOYED_IMAGE=$(aws lambda get-function \
+            --function-name "$FUNCTION_NAME" \
+            --region "$AWS_REGION" \
+            --query 'Code.ImageUri' --output text)
+          DEPLOYED_SHA=$(aws lambda get-function-configuration \
+            --function-name "$FUNCTION_NAME" \
+            --region "$AWS_REGION" \
+            --query 'Environment.Variables.RAGGITA_BUILD_SHA' --output text)
+          test "$DEPLOYED_IMAGE" = "$IMAGE_URI" || {
+            echo "::error::Lambda image mismatch. Expected $IMAGE_URI, got $DEPLOYED_IMAGE"; exit 1;
+          }
+          test "$DEPLOYED_SHA" = "$GITHUB_SHA" || {
+            echo "::error::Lambda build mismatch. Expected $GITHUB_SHA, got $DEPLOYED_SHA"; exit 1;
+          }
+          echo "Verified Lambda image and build: $GITHUB_SHA"
+
+      - name: Smoke test public Lambda URL
+        run: |
+          HEALTH=$(curl --fail --silent --show-error --retry 5 --retry-delay 5 \
+            "$PUBLIC_LAMBDA_URL/health")
+          echo "$HEALTH" | jq .
+          echo "$HEALTH" | jq -e --arg sha "$GITHUB_SHA" \
+            '.status == "healthy" and .build_sha == $sha' >/dev/null || {
+              echo "::error::Public Lambda URL is not serving this build. Check the URL, AWS account, region, and function name."; exit 1;
+            }
 
       - name: Summary
         run: |
           echo "### RagGita image pushed" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "$IMAGE_URI" >> "$GITHUB_STEP_SUMMARY"
+          echo "Build SHA: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"

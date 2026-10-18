@@ -216,7 +216,17 @@ The repository automatically syncs to Hugging Face Spaces via GitHub Actions on 
 
 1. Fork this repo
 2. Add `HF_TOKEN` secret in GitHub repo → Settings → Secrets
-3. Push to `main` — the workflow handles the rest
+3. In the Hugging Face Space, open **Settings → Variables and secrets** and add:
+   - `HF_TOKEN` — a Hugging Face read token, used for authenticated embeddings
+   - `USE_REMOTE_EMBEDDINGS=true`
+   - `OPENAI_API_KEY` — your OpenAI-compatible provider key
+   - `OPENAI_API_BASE` — for example `https://api.groq.com/openai/v1` for Groq
+   - `LLM_MODEL` — a currently available model at that provider
+4. Push to `main` — the workflow syncs the files; the Space uses its own secrets at runtime
+
+The GitHub `HF_TOKEN` only permits syncing files. It does not automatically configure
+the running Space, so the Space secrets above are required separately. Without them,
+the Space can sync successfully but remain unhealthy or return `503`.
 
 ### Docker (Self-hosted)
 
@@ -229,9 +239,11 @@ docker run -p 8000:8000 --env-file .env raggita
 
 The AWS workflow is in `.github/workflows/deploy_lambda.yml`. Configure
 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `HF_TOKEN`, and `OPENAI_API_KEY`
-as GitHub repository secrets. Create the `raggita` Lambda function once (or run
-`deploy_lambda.sh`); later pushes build a `linux/amd64` image and update it.
-The Lambda image uses authenticated Hugging Face embeddings and stays small.
+as GitHub repository secrets. The `raggita` Lambda function and its Function URL
+must already exist in `ap-south-1` in the same AWS account as those credentials.
+Later pushes build a `linux/amd64` image, update that exact function, verify its
+commit SHA, and smoke-test the public URL. The workflow fails if the function or
+URL is missing instead of reporting a false success.
 
 ---
 
