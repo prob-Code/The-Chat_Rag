@@ -17,7 +17,7 @@
 # utha leta hai, aur phir Lambda pe yeh error aata hai:
 #   Extension.LaunchError / ProcessSpawnFailed
 # Lambda function ka architecture bhi x86_64 hi hona chahiye.
-FROM --platform=linux/amd64 public.ecr.aws/awsguru/aws-lambda-adapter:1.0.1 AS adapter
+FROM --platform=linux/amd64 public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 AS adapter
 
 FROM --platform=linux/amd64 python:3.11-slim
 
@@ -34,8 +34,8 @@ COPY --from=adapter /lambda-adapter /opt/extensions/lambda-adapter
 #   RUN apt-get update && apt-get install -y --no-install-recommends gcc \
 #       && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements-lambda.txt ./
+RUN pip install --no-cache-dir -r requirements-lambda.txt
 
 # Application code
 COPY api.py .
@@ -54,6 +54,12 @@ ENV AWS_LWA_READINESS_CHECK_PATH=/health
 ENV AWS_LWA_INVOKE_MODE=response_stream
 
 ENV PYTHONUNBUFFERED=1
+# Lambda's task directory is read-only. Keep Hugging Face and
+# sentence-transformers caches on the writable ephemeral volume.
+ENV USE_REMOTE_EMBEDDINGS=false
+ENV HF_HOME=/tmp/huggingface
+ENV TRANSFORMERS_CACHE=/tmp/huggingface
+ENV SENTENCE_TRANSFORMERS_HOME=/tmp/sentence-transformers
 
 EXPOSE 8000
 

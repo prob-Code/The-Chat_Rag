@@ -1,0 +1,8 @@
+# AWS Lambda container dependencies.
+#
+# The normal requirements.txt intentionally stays small for Render's free
+# tier. Lambda has a writable /tmp volume and enough memory for the local
+# MiniLM embedder, so the Lambda image includes it and does not depend on a
+# Hugging Face token or a remote embedding call at cold start.
+-r requirements.txt
+sentence-transformers>=3.0.0

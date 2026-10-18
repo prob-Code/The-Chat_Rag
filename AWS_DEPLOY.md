@@ -17,6 +17,21 @@ Sab kuch `Dockerfile` aur `deploy_lambda.sh` me daal diya hai.
 
 ---
 
+## GitHub Actions deployment
+
+The `Deploy to AWS Lambda` workflow builds a pinned `linux/amd64` image, pushes
+both a commit tag and `latest` to ECR, then updates the existing `raggita`
+function. Add these repository secrets before running it:
+
+- `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` — an AWS identity with ECR
+  and Lambda update permissions in `ap-south-1`.
+- `OPENAI_API_KEY` — required for a new function; if omitted, an existing
+  Lambda key is kept.
+
+The workflow does not create the Lambda function or IAM role automatically.
+Create `raggita` once with the image printed in the workflow summary, or run
+`deploy_lambda.sh` once. After that, pushes update it automatically.
+
 ## Steps
 
 ### 1. Prerequisites
@@ -46,6 +61,11 @@ Windows pe Git Bash ya WSL me chalao.
 Pehli baar ~5-8 min lagega (image build + push). Baad me ~2 min.
 
 Script yeh sab karti hai: IAM role → ECR repo → build+push → Lambda function → reserved concurrency → Function URL with response streaming.
+
+The Lambda image includes `sentence-transformers` because the prebuilt FAISS
+index uses the local `all-MiniLM-L6-v2` embedding space. Embedding and model
+caches are redirected to `/tmp`, the writable Lambda volume; no `HF_TOKEN` is
+needed for this local embedding path.
 
 ### 4. Verify
 

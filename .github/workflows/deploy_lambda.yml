@@ -11,6 +11,7 @@ on:
       - 'static/**'
       - 'gita_vector_db/**'
       - 'requirements.txt'
+      - 'requirements-lambda.txt'
       - 'Dockerfile'
       - '.github/workflows/deploy_lambda.yml'
 
@@ -27,6 +28,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate AWS credentials
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          test -n "$AWS_ACCESS_KEY_ID" || { echo "::error::AWS_ACCESS_KEY_ID GitHub secret is missing"; exit 1; }
+          test -n "$AWS_SECRET_ACCESS_KEY" || { echo "::error::AWS_SECRET_ACCESS_KEY GitHub secret is missing"; exit 1; }
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -36,8 +45,12 @@ jobs:
 
       - name: Create ECR repository if it does not exist
         run: |
-          aws ecr describe-repositories --repository-names "$ECR_REPO" >/dev/null 2>&1 \
-            || aws ecr create-repository --repository-name "$ECR_REPO" >/dev/null
+          aws ecr describe-repositories \
+            --repository-names "$ECR_REPO" \
+            --region "$AWS_REGION" >/dev/null 2>&1 \
+            || aws ecr create-repository \
+              --repository-name "$ECR_REPO" \
+              --region "$AWS_REGION" >/dev/null
           echo "ECR repo ready: $ECR_REPO"
 
       - name: Log in to ECR
@@ -48,20 +61,60 @@ jobs:
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
-          IMAGE="$REGISTRY/$ECR_REPO:latest"
-          docker build -t "$IMAGE" .
+          IMAGE="$REGISTRY/$ECR_REPO:$GITHUB_SHA"
+          LATEST="$REGISTRY/$ECR_REPO:latest"
+          docker build --platform linux/amd64 -t "$IMAGE" -t "$LATEST" .
           docker push "$IMAGE"
+          docker push "$LATEST"
           echo "IMAGE_URI=$IMAGE" >> "$GITHUB_ENV"
           echo "Pushed: $IMAGE"
 
       - name: Update Lambda function if it already exists
         run: |
-          if aws lambda get-function --function-name "$FUNCTION_NAME" >/dev/null 2>&1; then
+          if aws lambda get-function \
+            --function-name "$FUNCTION_NAME" \
+            --region "$AWS_REGION" >/dev/null 2>&1; then
             aws lambda update-function-code \
               --function-name "$FUNCTION_NAME" \
-              --image-uri "$IMAGE_URI" >/dev/null
-            aws lambda wait function-updated --function-name "$FUNCTION_NAME"
+              --image-uri "$IMAGE_URI" \
+              --region "$AWS_REGION" >/dev/null
+            aws lambda wait function-updated \
+              --function-name "$FUNCTION_NAME" \
+              --region "$AWS_REGION"
             echo "Lambda function updated."
+
+            # Preserve existing variables (Firebase, DynamoDB, etc.) while
+            # enforcing the Lambda embedding/cache settings. If the optional
+            # GitHub secret is present, update the LLM key too.
+            CURRENT_ENV=$(aws lambda get-function-configuration \
+              --function-name "$FUNCTION_NAME" \
+              --region "$AWS_REGION" \
+              --query 'Environment.Variables' \
+              --output json)
+            if [ "$CURRENT_ENV" = "null" ]; then CURRENT_ENV='{}'; fi
+            UPDATED_ENV=$(printf '%s' "$CURRENT_ENV" | jq -c \
+              --arg openai_key "${OPENAI_API_KEY:-}" \
+              '. + {USE_REMOTE_EMBEDDINGS:"false",HF_HOME:"/tmp/huggingface",TRANSFORMERS_CACHE:"/tmp/huggingface",SENTENCE_TRANSFORMERS_HOME:"/tmp/sentence-transformers"} | if $openai_key != "" then . + {OPENAI_API_KEY:$openai_key,OPENAI_API_BASE:"https://api.openai.com/v1",LLM_MODEL:"gpt-4o-mini"} else . end')
+            aws lambda update-function-configuration \
+              --function-name "$FUNCTION_NAME" \
+              --environment "{\"Variables\":$UPDATED_ENV}" \
+              --region "$AWS_REGION" >/dev/null
+
+            if [ -n "${OPENAI_API_KEY:-}" ]; then
+              echo "Updated Lambda LLM configuration from OPENAI_API_KEY secret."
+            else
+              echo "OPENAI_API_KEY secret not set; preserved the existing Lambda value."
+            fi
+
+            if aws lambda get-function-url-config \
+              --function-name "$FUNCTION_NAME" \
+              --region "$AWS_REGION" >/dev/null 2>&1; then
+              aws lambda update-function-url-config \
+                --function-name "$FUNCTION_NAME" \
+                --auth-type NONE \
+                --invoke-mode RESPONSE_STREAM \
+                --region "$AWS_REGION" >/dev/null
+            fi
           else
             echo "-------------------------------------------------------"
             echo "Lambda function not created yet. Image is ready."
@@ -74,6 +127,8 @@ jobs:
             echo "After that, every push updates the function automatically."
             echo "-------------------------------------------------------"
           fi
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
       - name: Summary
         run: |

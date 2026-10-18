@@ -42,7 +42,7 @@ services:
       - key: FAST_TOP_K
         value: "3"
       - key: HF_TOKEN
-        sync: false                       # optional, HF rate limits ke liye
+        sync: false                       # required for remote embeddings
 
       # ── Voice ──
       - key: ENABLE_TTS

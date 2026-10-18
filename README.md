@@ -186,8 +186,9 @@ RagGita/
 │   └── bgita.pdf           # Source: Bhagavad Gita text
 │
 └── .github/workflows/
+    ├── ci.yml                 # Python checks on pushes and PRs
     ├── sync_to_hf_space.yml # Auto-sync GitHub → Hugging Face
-    └── deploy.yml           # CI/CD pipeline
+    └── deploy_lambda.yml    # Build and deploy AWS Lambda image
 ```
 
 ---
@@ -224,6 +225,15 @@ docker build -t raggita .
 docker run -p 8000:8000 --env-file .env raggita
 ```
 
+### AWS Lambda
+
+The AWS workflow is in `.github/workflows/deploy_lambda.yml`. Configure
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `OPENAI_API_KEY` as GitHub
+repository secrets. Create the `raggita` Lambda function once (or run
+`deploy_lambda.sh`); later pushes build a `linux/amd64` image and update it.
+The Lambda image uses local `all-MiniLM-L6-v2` embeddings and stores its model
+cache under `/tmp`, so an `HF_TOKEN` is not required for AWS.
+
 ---
 
 ## 🔑 Environment Variables
@@ -234,7 +244,7 @@ docker run -p 8000:8000 --env-file .env raggita
 | `LLM_MODEL` | ❌ | `llama-3.1-8b-instant` | Model identifier |
 | `OPENAI_API_BASE` | ❌ | `https://api.groq.com/openai/v1` | OpenAI-compatible endpoint |
 | `USE_REMOTE_EMBEDDINGS` | ❌ | `true` | Use HF Inference API for embeddings |
-| `HF_TOKEN` | ❌ | — | HuggingFace token (for remote embeddings) |
+| `HF_TOKEN` | ❌ | — | HuggingFace token; required for Render remote embeddings |
 | `PORT` | ❌ | `8000` | Server port |
 
 ---
