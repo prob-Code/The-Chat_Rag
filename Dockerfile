@@ -34,8 +34,8 @@ COPY --from=adapter /lambda-adapter /opt/extensions/lambda-adapter
 #   RUN apt-get update && apt-get install -y --no-install-recommends gcc \
 #       && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt requirements-lambda.txt ./
-RUN pip install --no-cache-dir -r requirements-lambda.txt
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Application code
 COPY api.py .
@@ -54,12 +54,9 @@ ENV AWS_LWA_READINESS_CHECK_PATH=/health
 ENV AWS_LWA_INVOKE_MODE=response_stream
 
 ENV PYTHONUNBUFFERED=1
-# Lambda's task directory is read-only. Keep Hugging Face and
-# sentence-transformers caches on the writable ephemeral volume.
-ENV USE_REMOTE_EMBEDDINGS=false
-ENV HF_HOME=/tmp/huggingface
-ENV TRANSFORMERS_CACHE=/tmp/huggingface
-ENV SENTENCE_TRANSFORMERS_HOME=/tmp/sentence-transformers
+# Keep Lambda's embedding path lightweight: the workflow supplies HF_TOKEN
+# and the app uses Hugging Face Inference API embeddings.
+ENV USE_REMOTE_EMBEDDINGS=true
 
 EXPOSE 8000
 

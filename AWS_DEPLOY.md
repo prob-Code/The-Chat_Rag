@@ -25,6 +25,7 @@ function. Add these repository secrets before running it:
 
 - `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` — an AWS identity with ECR
   and Lambda update permissions in `ap-south-1`.
+- `HF_TOKEN` — a Hugging Face token with read access to the embedding model.
 - `OPENAI_API_KEY` — required for a new function; if omitted, an existing
   Lambda key is kept.
 
@@ -62,10 +63,9 @@ Pehli baar ~5-8 min lagega (image build + push). Baad me ~2 min.
 
 Script yeh sab karti hai: IAM role → ECR repo → build+push → Lambda function → reserved concurrency → Function URL with response streaming.
 
-The Lambda image includes `sentence-transformers` because the prebuilt FAISS
-index uses the local `all-MiniLM-L6-v2` embedding space. Embedding and model
-caches are redirected to `/tmp`, the writable Lambda volume; no `HF_TOKEN` is
-needed for this local embedding path.
+The Lambda image intentionally stays small and uses authenticated Hugging Face
+Inference API embeddings for the prebuilt FAISS index. `HF_TOKEN` must be
+available in GitHub Actions and in the Lambda environment.
 
 ### 4. Verify
 

@@ -11,7 +11,6 @@ on:
       - 'static/**'
       - 'gita_vector_db/**'
       - 'requirements.txt'
-      - 'requirements-lambda.txt'
       - 'Dockerfile'
       - '.github/workflows/deploy_lambda.yml'
 
@@ -32,9 +31,11 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           test -n "$AWS_ACCESS_KEY_ID" || { echo "::error::AWS_ACCESS_KEY_ID GitHub secret is missing"; exit 1; }
           test -n "$AWS_SECRET_ACCESS_KEY" || { echo "::error::AWS_SECRET_ACCESS_KEY GitHub secret is missing"; exit 1; }
+          test -n "$HF_TOKEN" || { echo "::error::HF_TOKEN GitHub secret is missing"; exit 1; }
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -84,8 +85,7 @@ jobs:
             echo "Lambda function updated."
 
             # Preserve existing variables (Firebase, DynamoDB, etc.) while
-            # enforcing the Lambda embedding/cache settings. If the optional
-            # GitHub secret is present, update the LLM key too.
+            # enforcing the authenticated remote embedding settings.
             CURRENT_ENV=$(aws lambda get-function-configuration \
               --function-name "$FUNCTION_NAME" \
               --region "$AWS_REGION" \
@@ -94,7 +94,8 @@ jobs:
             if [ "$CURRENT_ENV" = "null" ]; then CURRENT_ENV='{}'; fi
             UPDATED_ENV=$(printf '%s' "$CURRENT_ENV" | jq -c \
               --arg openai_key "${OPENAI_API_KEY:-}" \
-              '. + {USE_REMOTE_EMBEDDINGS:"false",HF_HOME:"/tmp/huggingface",TRANSFORMERS_CACHE:"/tmp/huggingface",SENTENCE_TRANSFORMERS_HOME:"/tmp/sentence-transformers"} | if $openai_key != "" then . + {OPENAI_API_KEY:$openai_key,OPENAI_API_BASE:"https://api.openai.com/v1",LLM_MODEL:"gpt-4o-mini"} else . end')
+              --arg hf_token "$HF_TOKEN" \
+              '. + {USE_REMOTE_EMBEDDINGS:"true",HF_TOKEN:$hf_token} | if $openai_key != "" then . + {OPENAI_API_KEY:$openai_key,OPENAI_API_BASE:"https://api.openai.com/v1",LLM_MODEL:"gpt-4o-mini"} else . end')
             aws lambda update-function-configuration \
               --function-name "$FUNCTION_NAME" \
               --environment "{\"Variables\":$UPDATED_ENV}" \
@@ -129,6 +130,7 @@ jobs:
           fi
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
       - name: Summary
         run: |

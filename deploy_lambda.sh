@@ -26,6 +26,7 @@ TIMEOUT_SEC=60      # OpenAI ko 3-5s lagta hai; 60 me retries ki gunjaish hai
 RESERVED_CONCURRENCY=20   # OpenAI rate limit ke against asli bachaav
 
 : "${OPENAI_API_KEY:?OPENAI_API_KEY set nahi hai. 'export OPENAI_API_KEY=sk-...' chalao}"
+: "${HF_TOKEN:?HF_TOKEN set nahi hai. Hugging Face ka write/read token export karo}"
 
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 ECR_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO}"
@@ -71,10 +72,8 @@ LLM_MAX_TOKENS=220,\
 LLM_TEMPERATURE=0.6,\
 MAX_CONTEXT_CHARS=2500,\
 FAST_TOP_K=3,\
-USE_REMOTE_EMBEDDINGS=false,\
-HF_HOME=/tmp/huggingface,\
-TRANSFORMERS_CACHE=/tmp/huggingface,\
-SENTENCE_TRANSFORMERS_HOME=/tmp/sentence-transformers,\
+USE_REMOTE_EMBEDDINGS=true,\
+HF_TOKEN=${HF_TOKEN},\
 USE_BYTEZ=false,\
 ENABLE_TTS=true,\
 TTS_MODEL=gpt-4o-mini-tts,\
